@@ -129,7 +129,116 @@ t0             0x80000000       2147483648
 
 #### 阶段2: OpenSBI 初始化与内核加载
 
+从`0x80000000`开始，OpenSBI固件执行主初始化代码，其核心目的包括：
+- 从引导状态切换到内核运行状态
+- 建立完整的运行时环境(堆栈、中断、内存管理)
+- 最终将控制权交给真正的操作系统内核（加载到`0x80200000`）
+
+**设置内核入口断点**
+```bash
+(gdb) b *0x80200000
+```
+输出结果：
+```bash
+Breakpoint 1 at 0x80200000: file kern/init/entry.S, line 7.
+```
+
+**继续执行直到断点触发（内核加载完成）**
+```bash
+(gdb) continue
+```
+输出结果：
+```bash
+Continuing.
+
+Breakpoint 1, kern_entry () at kern/init/entry.S:7
+7           la sp, bootstacktop
+```
+```bash
+(gdb) info registers pc
+```
+输出结果：
+```bash
+pc             0x80200000       0x80200000 <kern_entry>
+```
+说明程序计数器已成功跳转到内核入口点 `0x80200000`。
+
+**验证内核加载内容**
+```bash
+(gdb) x/1x 0x80200000
+```
+输出结果：
+```bash
+0x80200000 <kern_entry>:        0x00003117
+```
+确认内核代码已经成功加载到 `0x80200000` 地址。
+
 #### 阶段3: 内核初始化
+
+**查看内核入口处的指令**
+```bash
+(gdb) x/50i 0x80200000
+```
+可以看到内核入口处的汇编指令和kern/init/entry.S以及kern/init/init.c中的代码功能完全对应：
+
+汇编指令：
+```bash
+0x80200000 <kern_entry>:     auipc   sp,0x3
+0x80200004 <kern_entry+4>:   mv      sp,sp
+```
+entry.S代码：
+```assembly
+kern_entry:
+    la sp, bootstacktop
+```
+汇编指令：
+```bash
+0x80200008 <kern_entry+8>:   j       0x8020000a <kern_init>
+```
+entry.S代码：
+```assembly
+    tail kern_init
+```
+汇编指令：
+```bash
+0x8020000a <kern_init>:      auipc   a0,0x3
+0x8020000e <kern_init+4>:    addi    a0,a0,-2
+0x80200012 <kern_init+8>:    auipc   a2,0x3
+0x80200016 <kern_init+12>:   addi    a2,a2,-10
+0x8020001a <kern_init+16>:   addi    sp,sp,-16
+0x8020001c <kern_init+18>:   li      a1,0
+0x8020001e <kern_init+20>:   sub     a2,a2,a0
+0x80200020 <kern_init+22>:   sd      ra,8(sp)
+0x80200022 <kern_init+24>:   jal     ra,0x802004b6 <memset>
+```
+init.c代码：
+```c
+int kern_init(void) {
+    extern char edata[], end[];
+    memset(edata, 0, end - edata);
+```
+汇编指令：
+```bash
+0x80200026 <kern_init+28>:   auipc   a1,0x0
+0x8020002a <kern_init+32>:   addi    a1,a1,1186
+0x8020002e <kern_init+36>:   auipc   a0,0x0
+0x80200032 <kern_init+40>:   addi    a0,a0,1210
+0x80200036 <kern_init+44>:   jal     ra,0x80200056 <cprintf>
+```
+init.c代码：
+```c
+    const char *message = "(THU.CST) os is loading ...\n";
+    cprintf("%s\n\n", message);
+```
+汇编指令：
+```bash
+0x8020003a <kern_init+48>:   j       0x8020003a <kern_init+48>
+```
+init.c代码：
+```c
+    while (1)
+        ;
+```
 
 ### 问题答案
 
