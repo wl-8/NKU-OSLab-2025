@@ -1,2 +1,31 @@
 # NKU-OSLab-2025
-This repository contains operating system experiment code.
+
+> This repository contains operating system experiment code.
+
+## Lab 1
+
+#### 实验目的
+
+实验1主要讲解最小可执行内核和启动流程。我们的内核主要在 Qemu 模拟器上运行，它可以模拟一台 64 位 RISC-V 计算机。为了让我们的内核能够正确对接到 Qemu 模拟器上，需要了解 Qemu 模拟器的启动流程，还需要一些程序内存布局和编译流程（特别是链接）相关知识。
+
+主要知识点包括：
+
+- 使用 链接脚本 描述内存布局
+
+- 进行 交叉编译 生成可执行文件，进而生成内核镜像
+
+- 使用 OpenSBI 作为 bootloader 加载内核镜像，并使用 Qemu 进行模拟
+
+- 使用 OpenSBI 提供的服务，在屏幕上格式化打印字符串用于以后调试
+
+#### 实验内容
+
+**练习1：理解内核启动中的程序入口操作**
+阅读 kern/init/entry.S内容代码，结合操作系统内核启动流程，说明指令 la sp, bootstacktop 完成了什么操作，目的是什么？ tail kern_init 完成了什么操作，目的是什么？
+
+**练习2: 使用GDB验证启动流程**
+为了熟悉使用 QEMU 和 GDB 的调试方法，请使用 GDB 跟踪 QEMU 模拟的 RISC-V 从加电开始，直到执行内核第一条指令（跳转到 0x80200000）的整个过程。通过调试，请思考并回答：RISC-V 硬件加电后最初执行的几条指令位于什么地址？它们主要完成了哪些功能？请在报告中简要记录你的调试过程、观察结果和问题的答案。
+
+## Lab 2
+
+
