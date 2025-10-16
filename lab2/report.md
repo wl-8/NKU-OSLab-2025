@@ -41,36 +41,227 @@ slub算法，实现两层架构的高效内存单元分配，第一层是基于�
 如果 OS 无法提前知道当前硬件的可用物理内存范围，请问你有何办法让 OS 获取可用物理内存范围？
 
 ## 实验过程
-### 练习1
+### 练习1：理解first-fit 连续物理内存分配算法（思考题）
 
-#### 函数说明
+#### 1.1 设计实现过程
 
-`default_init()` 初始化空闲区管理器，包括建立空链表、清空全局计数。
+First-Fit（首次适应）连续物理内存分配算法的核心思想是：**在空闲链表中按地址顺序查找，找到第一个满足请求大小的空闲块就进行分配**。该算法实现简单，分配速度快，但容易产生外部碎片。
 
-`default_init_memmap(struct Page *base, size_t n)` 把 `[base, base+n)` 整体初始化成一个空闲连续块，并按地址升序插入 free_list。
+#### 1.2 核心函数分析
 
-`default_alloc_pages(size_t n)` 依照 **First-Fit算法** 对 `free_list` 线性扫描，直到找到第一个满足条件 (`property >= n`) 的空闲块并分配，必要时进行切割。
+##### 初始化函数 `default_init()`
 
-`default_free_pages(struct Page *base, size_t n)` 释放连续页 `[base, base+n)`，将空闲块头按地址升序插回 `free_list`，并与相邻空闲块尝试合并。 
+```c
+static void default_init(void) {
+    list_init(&free_list);  // 初始化空闲链表
+    nr_free = 0;           // 清零空闲页面计数
+}
+```
 
-#### 物理内存分配过程
+- **功能**：初始化空闲区管理器，包括建立空链表、清空全局计数
+- **实现要点**：
+  - 调用`list_init()`初始化双向链表结构
+  - 将空闲页面总数`nr_free`设置为0
+  - 为后续的内存分配和释放操作做准备
+
+##### 内存映射初始化 `default_init_memmap()`
+
+**第一阶段：页面属性初始化**
+```c
+for (; p != base + n; p ++) {
+    assert(PageReserved(p));    // 确保页面是保留状态
+    p->flags = p->property = 0; // 清空页面标志和属性
+    set_page_ref(p, 0);         // 设置页面引用计数为0
+}
+```
+
+- **功能**：将保留状态的页面转换为可用状态，为加入空闲链表做准备
+- **实现要点**：
+  - `assert(PageReserved(p))`确认页面当前确实是保留状态
+  - 在`page_init()`中，所有页面最初都被标记为`PG_reserved`
+  - `p->flags = 0`清除了所有标志位，包括`PG_reserved`，将页面从保留状态转换为可用状态
+  - 将页面引用计数设置为0，表示页面未被使用，可以被分配
+
+**第二阶段：链表插入**
+```c
+base->property = n;        // 设置连续页面数量
+SetPageProperty(base);     // 标记为空闲页面块
+nr_free += n;              // 更新空闲页面总数
+
+// 按地址顺序插入到空闲链表中
+if (list_empty(&free_list)) {
+    list_add(&free_list, &(base->page_link));
+} else {
+    list_entry_t* le = &free_list;
+    while ((le = list_next(le)) != &free_list) {
+        struct Page* page = le2page(le, page_link);
+        if (base < page) {
+            list_add_before(le, &(base->page_link));  // 插入到第一个大于base的页面之前
+            break;
+        } else if (list_next(le) == &free_list) {
+            list_add(le, &(base->page_link));         // 插入到链表末尾
+        }
+    }
+}
+```
+
+- **功能**：将连续页面块按地址升序插入空闲链表
+- **实现要点**：
+  - 设置`base->property = n`记录连续页面数量
+  - 使用`SetPageProperty(base)`标记base页面为空闲块头部
+  - 遍历链表找到合适的插入位置，保持地址从小到大排序
+
+##### 内存分配 `default_alloc_pages()`
+
+**First-Fit算法核心实现**：
+```c
+static struct Page *default_alloc_pages(size_t n) {
+    assert(n > 0);
+    if (n > nr_free) {
+        return NULL;  // 空闲内存不足
+    }
+
+    struct Page *page = NULL;
+    list_entry_t *le = &free_list;
+
+    // First-Fit算法：遍历空闲链表，找到第一个满足条件的空闲块
+    while ((le = list_next(le)) != &free_list) {
+        struct Page *p = le2page(le, page_link);
+        if (p->property >= n) {  // 找到第一个足够大的空闲块
+            page = p;
+            break;               // 立即分配，不再继续搜索
+        }
+    }
+```
+
+- **功能**：按照First-Fit策略查找并分配内存
+- **算法特点**：
+  - 线性扫描空闲链表，从地址最低处开始搜索
+  - 找到第一个满足`property >= n`的块就停止搜索
+  - 时间复杂度为O(n)，其中n为空闲块数量
+
+**分配和分割逻辑**：
+```c
+    if (page != NULL) {
+        list_entry_t* prev = list_prev(&(page->page_link));
+        list_del(&(page->page_link));  // 从空闲链表中移除
+
+        if (page->property > n) {
+            // 如果空闲块大于请求大小，进行分割
+            struct Page *p = page + n;
+            p->property = page->property - n;  // 剩余部分的大小
+            SetPageProperty(p);                // 标记为空闲块
+            list_add(prev, &(p->page_link));   // 将剩余部分重新加入链表
+        }
+
+        nr_free -= n;           // 更新空闲页面计数
+        ClearPageProperty(page); // 清除分配页面的空闲标志
+    }
+    return page;
+}
+```
+
+- **功能**：处理内存块的分割和状态更新
+- **实现要点**：
+  - 如果找到的空闲块大于请求大小，则进行分割
+  - 剩余部分重新插入空闲链表，保持地址顺序
+  - 更新相关页面属性和空闲计数
+
+##### 内存释放 `default_free_pages()`
+
+**第一阶段：页面初始化**
+```c
+struct Page *p = base;
+for (; p != base + n; p ++) {
+    assert(!PageReserved(p) && !PageProperty(p));
+    p->flags = 0;
+    set_page_ref(p, 0);
+}
+
+base->property = n;        // 设置连续页面数量
+SetPageProperty(base);     // 标记为空闲页面块
+nr_free += n;              // 更新空闲页面总数
+```
+
+**第二阶段：链表插入**
+```c
+// 按地址顺序插入到空闲链表（与init_memmap相同逻辑）
+if (list_empty(&free_list)) {
+    list_add(&free_list, &(base->page_link));
+} else {
+    list_entry_t* le = &free_list;
+    while ((le = list_next(le)) != &free_list) {
+        struct Page* page = le2page(le, page_link);
+        if (base < page) {
+            list_add_before(le, &(base->page_link));
+            break;
+        } else if (list_next(le) == &free_list) {
+            list_add(le, &(base->page_link));
+        }
+    }
+}
+```
+
+**第三阶段：合并相邻空闲块**
+```c
+// 向前合并
+list_entry_t* le = list_prev(&(base->page_link));
+if (le != &free_list) {
+    p = le2page(le, page_link);
+    if (p + p->property == base) {  // 检查是否连续
+        p->property += base->property;  // 合并大小
+        ClearPageProperty(base);        // 清除base的空闲标志
+        list_del(&(base->page_link));   // 从链表中删除base
+        base = p;                       // 更新base指针
+    }
+}
+
+// 向后合并
+le = list_next(&(base->page_link));
+if (le != &free_list) {
+    p = le2page(le, page_link);
+    if (base + base->property == p) {   // 检查是否连续
+        base->property += p->property;  // 合并大小
+        ClearPageProperty(p);           // 清除p的空闲标志
+        list_del(&(p->page_link));      // 从链表中删除p
+    }
+}
+```
+
+- **功能**：将释放的内存块插入空闲链表并尝试合并
+- **实现要点**：
+  - 首先将释放的块按地址顺序插入链表
+  - 然后检查前后相邻的块，如果物理地址连续则合并
+  - 合并可以减少外部碎片，提高内存利用率
+
+#### 1.3 物理内存分配过程
 
 内核启动后，跳转到 `kern_init` 继续执行内核自身初始化，其中 `pmm_init` 将完成物理内存管理初始化，具体步骤如下：
 
-1. 以 `init_pmm_manager` 为入口指定目标物理内存管理器，并初始化一个物理内存管理器实例
-2. 以 `page_init` 为入口探测物理内存，通过从设备树 DTB 解析得到物理内存基址和大小来确定可用物理空间范围，同时初始化页数组 `pages[]` 并对齐可用空闲区
-3. 以 `init_memmap` 为入口回调策略函数实现，注册初始空闲块
-4. 使用 `alloc_pages` 完成内存分配，按照 **First-Fit算法** 搜索符合条件的空闲块，并调整空闲块头与空闲链表
-5. 使用 `free_pages` 完成内存回收，并尝试合并空闲块
+1. **管理器初始化**：以 `init_pmm_manager` 为入口指定目标物理内存管理器，并调用`default_init()`初始化管理器实例
+2. **物理内存探测**：以 `page_init` 为入口探测物理内存，通过从设备树 DTB 解析得到物理内存基址和大小来确定可用物理空间范围，同时初始化页数组 `pages[]` 并对齐可用空闲区
+3. **空闲块注册**：以 `init_memmap` 为入口回调`default_init_memmap()`函数，将探测到的空闲内存区域注册到空闲链表中
+4. **内存分配**：使用 `default_alloc_pages()` 完成内存分配，按照 **First-Fit算法** 搜索符合条件的空闲块，并调整空闲块头与空闲链表
+5. **内存回收**：使用 `default_free_pages()` 完成内存回收，按地址插入空闲链表并尝试合并相邻空闲块
 
-#### 优化策略
+#### 1.4 First-Fit算法的改进空间
 
-1. **降低线性扫描成本**
-    a. 记录上一次扫描终止点，作为下一次扫描起始点
-    b. 维护桶结构，对不同空闲块进行大小分级以加速定位
-2. **减少碎片**
-    a. 基于桶结构，按“小块优先”原则分配
-    b. 设置切割阈值，减少外部碎片
+##### 性能优化
+- **降低线性扫描成本**：引入平衡二叉搜索树或跳表，将时间复杂度从O(n)降至O(log n)
+- **维护桶结构**：按空闲块大小分级管理，加速定位过程
+- **优化插入操作**：使用更高效的数据结构减少插入时的遍历时间
+
+##### 碎片管理
+- **减少外部碎片**：设置切割阈值，避免产生过小的碎片块
+- **主动合并策略**：定期整理内存，合并相邻的碎片块
+- **智能分割**：根据请求大小优化分割策略
+
+##### 混合分配策略
+- **分层分配**：小内存使用slab分配器，大内存使用First-Fit算法
+- **伙伴系统补充**：引入Buddy System处理特定大小的分配请求
+- **缓存机制**：优先重新分配最近释放的内存块
+
+尽管First-Fit算法存在这些改进空间，但其实现简单、分配快速的优点使其在某些场景下仍然是合适的选择。
 
 ---
 ### 练习2
