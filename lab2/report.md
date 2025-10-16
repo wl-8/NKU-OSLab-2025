@@ -1,16 +1,234 @@
-# lab2：物理内存和页表
+# 2025 操作系统 Lab2
+> 团队成员: 2313857陈天祺 & 2311208魏来 & 2312166王旭
 
-## 扩展练习Challenge：任意大小的内存单元slub分配算法
+## 实验目的
 
-### 4.1 SLUB思想核心与实现差异
+- 理解页表的建立和使用方法
+- 理解物理内存的管理方法
+- 理解页面分配算法
+
+## 实验内容
+
+### 练习1：理解first-fit 连续物理内存分配算法（思考题）
+
+first-fit 连续物理内存分配算法作为物理内存分配一个很基础的方法，需要同学们理解它的实现过程。
+
+请大家仔细阅读实验手册的教程并结合`kern/mm/default_pmm.c`中的相关代码，认真分析`default_init`，`default_init_memmap`，`default_alloc_pages`， `default_free_pages`等相关函数，并描述程序在进行物理内存分配的过程以及各个函数的作用。 请在实验报告中简要说明你的设计实现过程。
+
+请回答如下问题：*你的first fit算法是否有进一步的改进空间*？
+
+
+### 练习2：实现 Best-Fit 连续物理内存分配算法（需要编程）
+
+在完成练习一后，参考kern/mm/default_pmm.c对First Fit算法的实现，编程实现Best Fit页面分配算法，算法的时空复杂度不做要求，能通过测试即可。 
+
+请在实验报告中简要说明你的设计实现过程，阐述代码是如何对物理内存进行分配和释放，并回答如下问题：
+
+你的 Best-Fit 算法是否有进一步的改进空间？
+
+### 扩展1：扩展练习Challenge：buddy system（伙伴系统）分配算法（需要编程）
+
+Buddy System算法把系统中的可用存储空间划分为存储块(Block)来进行管理, 每个存储块的大小必须是2的n次幂(Pow(2, n)), 即1, 2, 4, 8, 16, 32, 64, 128...
+
+参考伙伴分配器的一个极简实现， 在ucore中实现buddy system分配算法，要求有比较充分的测试用例说明实现的正确性，需要有设计文档。
+
+### 扩展2：任意大小的内存单元slub分配算法（需要编程）
+slub算法，实现两层架构的高效内存单元分配，第一层是基于页大小的内存分配，第二层是在第一层基础上实现基于任意大小的内存分配。可简化实现，能够体现其主体思想即可。
+
+参考linux的slub分配算法/，在ucore中实现slub分配算法。要求有比较充分的测试用例说明实现的正确性，需要有设计文档。
+
+### 扩展3：硬件的可用物理内存范围的获取方法（思考题）
+如果 OS 无法提前知道当前硬件的可用物理内存范围，请问你有何办法让 OS 获取可用物理内存范围？
+
+## 实验过程
+### 练习1
+
+#### 函数说明
+
+`default_init()` 初始化空闲区管理器，包括建立空链表、清空全局计数。
+
+`default_init_memmap(struct Page *base, size_t n)` 把 `[base, base+n)` 整体初始化成一个空闲连续块，并按地址升序插入 free_list。
+
+`default_alloc_pages(size_t n)` 依照 **First-Fit算法** 对 `free_list` 线性扫描，直到找到第一个满足条件 (`property >= n`) 的空闲块并分配，必要时进行切割。
+
+`default_free_pages(struct Page *base, size_t n)` 释放连续页 `[base, base+n)`，将空闲块头按地址升序插回 `free_list`，并与相邻空闲块尝试合并。 
+
+#### 物理内存分配过程
+
+内核启动后，跳转到 `kern_init` 继续执行内核自身初始化，其中 `pmm_init` 将完成物理内存管理初始化，具体步骤如下：
+
+1. 以 `init_pmm_manager` 为入口指定目标物理内存管理器，并初始化一个物理内存管理器实例
+2. 以 `page_init` 为入口探测物理内存，通过从设备树 DTB 解析得到物理内存基址和大小来确定可用物理空间范围，同时初始化页数组 `pages[]` 并对齐可用空闲区
+3. 以 `init_memmap` 为入口回调策略函数实现，注册初始空闲块
+4. 使用 `alloc_pages` 完成内存分配，按照 **First-Fit算法** 搜索符合条件的空闲块，并调整空闲块头与空闲链表
+5. 使用 `free_pages` 完成内存回收，并尝试合并空闲块
+
+#### 优化策略
+
+1. **降低线性扫描成本**
+    a. 记录上一次扫描终止点，作为下一次扫描起始点
+    b. 维护桶结构，对不同空闲块进行大小分级以加速定位
+2. **减少碎片**
+    a. 基于桶结构，按“小块优先”原则分配
+    b. 设置切割阈值，减少外部碎片
+
+---
+### 练习2
+
+---
+### 扩展1--设计文档
+
+#### 算法原理
+
+伙伴分配器是一种内存管理算法，通过将内存分割为 \(2^{n}\) 大小的块来实现。其运作机制可以简单描述为：
+1. 需要分配内存时如果没有合适的内存块，会对半切分内存块直到分离出合适大小的内存块为止，最后再将其返回
+2. 需要释放内存时，会寻找相邻的块，如果其已经释放了，就将这俩合并，再递归这个过程，直到无法再合并为止
+
+![img](assets/buddy.png)
+
+#### 数据结构
+
+```C++
+typedef struct{
+    struct Page* base;     // 块头指针
+    size_t size;           // 整体容量（总页数）
+    size_t valid_size;     // 可用容量
+    int longest[65535];    // 节点数组，存储该节点覆盖的空闲页数（占用时置 0）
+    unsigned int nr_free;
+} buddyT;
+```
+
+- `base` ：指向全局空闲块起始位置
+- `size` ：分配器逻辑上支持的可分配容量
+- `valid_size` ：分配器实际上支持的可分配容量
+- `longest[i]` ：第 i 个节点对应的空闲块大小
+
+>伙伴分配器的块组织形式在逻辑上近似为一个完全二叉树
+
+#### 算法设计
+
+**初始化方面**，对于 `buddy_init_memmap`，采用自底向上方法，首先对叶子节点的 `longest[i]` 置 1 来表示基础块大小，然后遍历非叶节点，若其左右孩子对应的空闲块大小相等且不为空，那么合并伙伴块，令该节点对应空闲块大小为其孩子的两倍。
+
+需要注意的是，由于传入的空闲区大小参数 `n` 不一定是 2 的幂，那么就需要对其向上取整到 2 的幂，这样会多出来一些不可用的虚拟块。对于这样的虚拟块，在初始化阶段将其叶结点的 `longest[i]` 设为 0。
+
+```C++
+static void 
+buddy_init_memmap(struct Page* base, size_t n){
+    ...
+    // 树初始化
+    // 不可用叶子节点状态位置 0
+    for(int i = tSize - 1; i >= tSize - (bt.size - n); i--){
+        bt.longest[i] = 0;
+    }
+    // 可用叶子节点状态位置 1
+    for(int i = tSize - (bt.size - n) - 1; i >= tSize - bt.size; i--){
+        bt.longest[i] = 1;
+    }
+
+    // 自底向上更新
+    for(int i = tSize - (1 << order) - 1; i >= 0; i--){
+        size_t left = bt.longest[2 * i + 1];
+        size_t right = bt.longest[2 * i + 2];
+
+        if(left == right){
+            // 伙伴空闲块可合并
+            bt.longest[i] = left ? left << 1 : 0;
+        } else{
+            bt.longest[i] = (left > right) ? left : right;
+        }
+    }
+    ...
+}
+```
+
+**分配策略方面**，对于 `buddy_alloc_pages`，采用自顶向下方法，按“左优先”原则搜索能够满足分配需求的最小块，对选中的块标记为占用（`longest[i]=0`）并计算起始偏移；然后采用自底向上方法，按“取子块中的较大者”原则更新搜索路径上节点对应的空闲块大小。
+
+```C++
+// 分配算法
+static struct Page *
+buddy_alloc_pages(size_t n){
+    ...
+    // 自顶向下搜索目标块
+    size_t index = 0;           // 目标块节点索引
+    size_t block_size;          // 目标块大小
+    size_t offset = 0;          // 目标块起始偏移
+    for(block_size=bt.size; block_size!=alloc_size; block_size/=2){
+        if(bt.longest[LEFT_LEAF(index)] >= alloc_size)
+            index = LEFT_LEAF(index);
+        else
+            index = RIGHT_LEAF(index);
+    }
+
+    bt.longest[index] = 0;                                  // 标记为占用
+    offset = (index + 1) * block_size - bt.size;            // 计算占用块起始偏移
+    bt.nr_free -=  alloc_size;
+
+    // 自底向上更新
+    while(index){
+        index = PARENT(index);
+        // 更新为子块的较大块
+        bt.longest[index] = (bt.longest[LEFT_LEAF(index)] > bt.longest[RIGHT_LEAF(index)])
+                    ? bt.longest[LEFT_LEAF(index)] : bt.longest[RIGHT_LEAF(index)];
+    }
+
+    return bt.base + offset;
+}
+```
+
+**回收策略方面**，对于 `buddy_free_pages`，采用自底向上方法，根据页指针计算页偏移，接着向上搜索被占用节点（`longest[i]=0`），恢复其空闲块大小，然后继续向上尝试合并，直到根节点。
+
+```C++
+static void
+buddy_free_pages(struct Page* base, size_t n){
+    ...
+    // 自底向上寻找被占用节点
+    size_t block_size = 1;
+    while(bt.longest[index]!=0 && index > 0){     
+        index = PARENT(index);
+        block_size <<= 1;
+    }
+    bt.longest[index] = block_size;
+
+    // 自底向上更新
+    while(index){
+        index = PARENT(index);
+
+        size_t left = bt.longest[LEFT_LEAF(index)];
+        size_t right = bt.longest[RIGHT_LEAF(index)];
+
+        if(left == right) 
+            bt.longest[index] = left ? (left << 1) : 0;
+        else
+            bt.longest[index] = (left > right) ? left : right;
+    }
+    ...
+}
+```
+
+#### 算法检验
+
+测试点主要分为以下几个方面：
+
+1. 基础内存分配/回收检查，地址检查，算法执行逻辑检查
+2. 分配时占用冲突处理检查
+3. 进阶内存分配/回收/合并检查
+4. 非理想内存大小（非 2^k）申请处理检查
+5. 并发/复杂内存分配/回收/合并检查
+
+![img](assets/buddy_result.png)
+
+---
+### 扩展2
+
+#### 4.1 SLUB思想核心与实现差异
 
 SLUB（Simplified Locked Unqueued Buddy）是Linux内核中的一种内存分配器，其核心思想是**用最简单的数据结构实现高效的内存分配**。我的任意大小的内存单元分配算法在缓存管理层面与标准SLUB基本一致，但在对象管理方式上采用了不同的技术路线。
 
-#### 4.1.1 相同的两层架构设计
+##### 4.1.1 相同的两层架构设计
 
 我的SLUB分配器和标准SLUB一样，采用了两层架构设计：
 
-#### 第一层：页面级内存分配（大内存处理）
+##### 第一层：页面级内存分配（大内存处理）
 - **适用场景**：当申请内存大小超过4KB（`SLUB_MAX_SIZE = 2048`）时
 - **实现方式**：直接调用页面分配器（使用Best-Fit算法）
 - **优势**：避免大内存分配的开销，直接使用底层页面管理
@@ -24,7 +242,7 @@ if (size > SLUB_MAX_SIZE) {
 }
 ```
 
-#### 第二层：SLUB小对象分配器（小内存处理）
+##### 第二层：SLUB小对象分配器（小内存处理）
 - **适用场景**：8-2048字节的小内存分配
 - **预设大小**：8, 16, 32, 64, 128, 256, 512, 1024, 2048共9个级别
 - **分配策略**：向上取整到最近的预设大小，减少碎片
@@ -34,9 +252,9 @@ if (size > SLUB_MAX_SIZE) {
 - 预设大小分类，简化管理复杂度
 - 减少内存碎片，提高分配效率
 
-#### 4.1.2 不同的对象管理方式
+##### 4.1.2 不同的对象管理方式
 
-#### 标准SLUB vs 我的实现
+##### 标准SLUB vs 我的实现
 
 **标准SLUB的对象管理**：
 - **内嵌指针链表**：在每个空闲对象内部存储下一个空闲对象的地址
@@ -48,7 +266,7 @@ if (size > SLUB_MAX_SIZE) {
 - **位图管理**：使用256位位图记录页面内对象的分配状态
 - **数据与管理分离**：数据页面纯存储用户数据，管理信息集中在`slub_page`中，而`slub_page`存储在内核空间
 
-#### 两种方案的优缺点对比
+##### 两种方案的优缺点对比
 
 | 特性 | 标准SLUB（内嵌指针） | 我的实现（位图+管理结构） |
 |------|-------------------|---------------------------|
@@ -57,14 +275,14 @@ if (size > SLUB_MAX_SIZE) {
 | **数据纯净度** | 空闲对象混有管理信息 | 数据页面完全纯净 |
 | **管理复杂度** | 指针操作，较复杂 | 位图操作，直观简单 |
 
-#### 我的实现的优势
+##### 我的实现的优势
 
 1. **页面分配规整**：每个数据页面都是纯的4KB用户数据区域，不存在管理信息污染
 2. **管理信息集中**：所有管理信息都在`slub_page`结构中，便于调试和统计
 3. **内存利用率有时较高**：当小对象大量分配时，内存利用率较高（一个`slub_page`结构体大小72字节将小于256个8字节指针）；且`slub_page`结构体完全存储在内核空间，不占用用户数据空间
 4. **实现简单可靠**：位图操作直观，不易出错，实现相对容易
 
-#### 我的实现的劣势
+##### 我的实现的劣势
 
 1. **查找性能较低**：申请内存时需要线性扫描256位位图来找到空闲对象；释放时也需定位对象所在页面，时间复杂度为O(n)
 2. **不适合高频分配**：在内存分配密集的场景下性能可能不如标准SLUB
@@ -73,11 +291,11 @@ if (size > SLUB_MAX_SIZE) {
 
 尽管存在以上差异，我的实现依然保留了SLUB的核心思想：**简化管理结构，实现两级架构的任意大小内存分配**。
 
-### 4.2 实现细节与代码说明
+#### 4.2 实现细节与代码说明
 
-#### 4.2.1 数据结构设计
+##### 4.2.1 数据结构设计
 
-#### slub_cache结构体 - 缓存管理器
+##### slub_cache结构体 - 缓存管理器
 
 ```c
 struct slub_cache {
@@ -95,7 +313,7 @@ struct slub_cache {
 - **双链表管理**：`partial_list`管理有空闲空间的页面，`full_list`管理完全占用的页面
 - **状态统计**：记录页面对象使用情况，便于内存管理和调试
 
-#### slub_page结构体 - 页面管理器
+##### slub_page结构体 - 页面管理器
 
 ```c
 struct slub_page {
@@ -114,9 +332,9 @@ struct slub_page {
 - **链表连接**：通过next指针将页面组织成链表，便于快速遍历和管理
 - **归属明确**：每个slub_page明确知道自己属于哪个缓存，便于释放时正确处理
 
-#### 4.2.2 内存分配和释放的实现
+##### 4.2.2 内存分配和释放的实现
 
-#### slub_init() - 初始化函数
+##### slub_init() - 初始化函数
 
 ```c
 void slub_init(void) {
@@ -160,7 +378,7 @@ static int init_cache_pool(void) {
 - 对于`slub_cache`结构体，我将`initialized`字段设置为`0`并初始化其它字段为空或零值，以确保缓存池在使用前处于干净状态
 - 对于`slub_page`数组，我将每个页面的`cache`字段设置为`NULL`，表示这些页面当前未被任何缓存使用
 
-#### kmalloc() - 内存分配接口
+##### kmalloc() - 内存分配接口
 
 **第一阶段：大小判断与路由**
 ```c
@@ -278,7 +496,7 @@ static struct slub_cache *get_cache(size_t size) {
 - 初始化256位位图，前`total_objects`位置1（表示空闲）
 - 将新页面加入partial_list
 
-#### kfree() - 内存释放接口
+##### kfree() - 内存释放接口
 
 **第一阶段：大小判断与路由**
 ```c
@@ -377,31 +595,31 @@ void kfree(void *ptr, size_t size) {
 - 从full_list移到partial_list，便于后续分配使用
 - 优化内存利用率，避免满页面浪费
 
-### 4.3 测试设计与验证
+#### 4.3 测试设计与验证
 
-#### 4.3.1 测试用例设计
+##### 4.3.1 测试用例设计
 
-#### slub_basic_check()
+##### slub_basic_check()
 - 测试基础分配和释放功能
 - 验证地址唯一性和对齐
 - 测试内存复用
 
-#### slub_page_check()
+##### slub_page_check()
 - 测试 2048 字节对象的页面管理
 - 验证页面填充和新页面分配
 - 测试页面释放机制
 
-#### slub_large_check()
+##### slub_large_check()
 - 测试大内存分配（>2048字节）
 - 验证页面对齐
 - 测试直接页面分配机制
 
-#### slub_mixed_check()
+##### slub_mixed_check()
 - 测试不同大小对象的混合分配
 - 验证缓存选择机制
 - 测试复杂释放场景
 
-#### 4.3.2 测试结果与分析
+##### 4.3.2 测试结果与分析
 
 ```bash
 === SLUB Allocator Test ===
@@ -472,3 +690,6 @@ slub_mixed_check passed!
 === SLUB All Tests Passed ===
 === SLUB Test Complete ===
 ```
+
+--- 
+### 扩展3
