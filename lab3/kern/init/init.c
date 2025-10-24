@@ -35,6 +35,27 @@ int kern_init(void) {
     clock_init();   // init clock interrupt
     intr_enable();  // enable irq interrupt
 
+    // 测试Challenge3：异常中断处理
+    cprintf("\n=== Testing Exception Handling (Challenge3) ===\n");
+
+    // 测试1：32位非法指令
+    cprintf("Test 1: Triggering 32-bit illegal instruction...\n");
+    asm volatile(".word 0x12345677");
+
+    // 测试2：16位非法指令
+    cprintf("Test 2: Triggering 16-bit illegal instruction...\n");
+    asm volatile(".2byte 0x0000");
+
+    // 测试3：16位断点
+    cprintf("Test 3: Triggering 16-bit breakpoint...\n");
+    asm volatile(".2byte 0x9002"); // 16位断点 (0x9002是c.ebreak的压缩指令)
+
+    // 测试4：32位断点
+    cprintf("Test 4: Triggering 32-bit breakpoint...\n");
+    asm volatile(".word 0x00100073"); // 32位断点 (0x00100073是标准ebreak指令)
+
+    cprintf("=== Exception handling tests completed ===\n\n");
+
     /* do nothing */
     while (1)
         ;

@@ -163,19 +163,61 @@ void exception_handler(struct trapframe *tf) {
             break;
         case CAUSE_ILLEGAL_INSTRUCTION:
              // 非法指令异常处理
-             /* LAB3 CHALLENGE3   YOUR CODE :  */
+             /* LAB3 CHALLENGE3   2311208 :  */
             /*(1)输出指令异常类型（ Illegal instruction）
              *(2)输出异常指令地址
              *(3)更新 tf->epc寄存器
             */
+            cprintf("Exception type: Illegal instruction\n");
+            cprintf("Illegal instruction caught at 0x%08x\n", tf->epc);
+
+            // 检查指令长度，如果是压缩指令（16位）则+2，否则+4
+            {
+                unsigned short *instr = (unsigned short*)tf->epc;
+                unsigned short instruction = *instr;
+
+                if ((instruction & 0x3) != 0x3) {
+                    // 压缩指令 (16位)
+                    cprintf("Instruction word: 0x%04x\n", instruction);
+                    tf->epc += 2;
+                    cprintf("Instruction length: 2 bytes (compressed instruction)\n");
+                } else {
+                    // 标准指令 (32位)
+                    unsigned int full_instruction = *(unsigned int*)tf->epc;
+                    cprintf("Instruction word: 0x%08x\n", full_instruction);
+                    tf->epc += 4;
+                    cprintf("Instruction length: 4 bytes (standard instruction)\n");
+                }
+            }
             break;
         case CAUSE_BREAKPOINT:
             //断点异常处理
-            /* LAB3 CHALLLENGE3   YOUR CODE :  */
+            /* LAB3 CHALLENGE3   2311208 :  */
             /*(1)输出指令异常类型（ breakpoint）
              *(2)输出异常指令地址
              *(3)更新 tf->epc寄存器
             */
+            cprintf("Exception type: Breakpoint\n");
+            cprintf("ebreak caught at 0x%08x\n", tf->epc);
+
+            // 检查指令长度，如果是压缩指令（16位）则+2，否则+4
+            {
+                unsigned short *instr = (unsigned short*)tf->epc;
+                unsigned short instruction = *instr;
+
+                if ((instruction & 0x3) != 0x3) {
+                    // 压缩指令 (16位)
+                    cprintf("Instruction word: 0x%04x\n", instruction);
+                    tf->epc += 2;
+                    cprintf("Instruction length: 2 bytes (compressed instruction)\n");
+                } else {
+                    // 标准指令 (32位)
+                    unsigned int full_instruction = *(unsigned int*)tf->epc;
+                    cprintf("Instruction word: 0x%08x\n", full_instruction);
+                    tf->epc += 4;
+                    cprintf("Instruction length: 4 bytes (standard instruction)\n");
+                }
+            }
             break;
         case CAUSE_MISALIGNED_LOAD:
             break;
