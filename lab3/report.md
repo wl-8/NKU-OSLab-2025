@@ -413,6 +413,96 @@ struct trapframe {
 但在实际应用中，出于安全性和通用性考虑，一般会采取保存所有寄存器的方式来进行上下文切换。
 
 ### Challenge 2
+#### 1.汇编代码`csrw sscratch, sp`的操作与目的
+
+```assembly
+#include <riscv.h>
+
+    .macro SAVE_ALL
+
+    csrw sscratch, sp
+
+    addi sp, sp, -36 * REGBYTES
+    # save x registers
+    STORE x0, 0*REGBYTES(sp)
+    STORE x1, 1*REGBYTES(sp)
+    STORE x3, 3*REGBYTES(sp)
+    # ...
+```
+`sscratch` 是一个专门给S-Mode使用的“草稿”寄存器，非常适合用来暂存数据，而不会破坏任何通用寄存器。
+
+`csrw` (CSR Write - 写CSR), 格式: `csrr 目标通用寄存器, 源CSR寄存器`; 把一个通用寄存器中的值，复制写到一个CSR中,我们这里的指令是`csrw sscratch, sp`，也就是将当前 `sp` (栈指针) 寄存器的值，写入到 `sscratch` 这个特殊的CSR寄存器中。
+
+**目的**：
+由于我们的这条指令`csrw sscratch, sp` 是在 `SAVE_ALL` 宏的开头执行的，我们的`SAVE_ALL` 宏需要负责把发生中断前的上下文即所有的寄存器的值保存到栈中(包括通用寄存器和CSR)，但是保存这些内容需要首先开辟栈中的一片`struct trapframe`的空间，这需要依赖于我们的`sp`栈指针的移动，因此我们需要在移动栈指针`sp`之前(对应trapentry.S中使用 `STORE`指令保存各通用寄存器之前)，首先保存好当前`sp`的值，将当前的栈指针 `sp` 的值保存到 `sscratch` 中，防止后续`sp`值改动后保存了错误的`sp`值。
+
+#### 2.汇编代码`csrrw s0, sscratch, x0`的操作与目的
+
+```assembly
+    csrrw s0, sscratch, x0
+    csrr s1, sstatus
+    csrr s2, sepc
+    csrr s3, sbadaddr
+    csrr s4, scause
+
+    STORE s0, 2*REGBYTES(sp)
+    STORE s1, 32*REGBYTES(sp)
+    STORE s2, 33*REGBYTES(sp)
+    STORE s3, 34*REGBYTES(sp)
+    STORE s4, 35*REGBYTES(sp)
+    .endm
+```
+ `csrr`(CSR Read - 读CSR), 格式: `csrr 目标通用寄存器, 源CSR寄存器`;把一个CSR的值，复制到一个通用寄存器中。
+
+ `csrrw` (CSR Read and Write - 读写CSR), 格式: `csrrw 目标通用寄存器, 读写CSR寄存器, 源通用寄存器`，他起到下面的这两个分步的作用，分别对应着`Read`与`Write`:
+ 1.读取CSR的原始值，并将其存入“目标通用寄存器”。2.将“源通用寄存器”的值，写入到同一个CSR中。
+
+因此我们这里的`csrrw s0, sscratch, x0`指令的作用就是，把`sscratch`寄存器中的值(也就是之前保存的`sp`值)，读取出来，存入到`s0`通用寄存器中，同时将`x0`寄存器的值(恒为0)写入到`sscratch`寄存器中，从而清空`sscratch`寄存器。这里我们之所以要清空`sscratch`寄存器，是为了防止后续代码误用`sscratch`寄存器时，读到的是之前保存的`sp`值，从而引发错误。
+
+
+**目的**：
+我们的这条指令`csrrw s0, sscratch, x0` 是在 `SAVE_ALL` 宏的结尾部分执行的，这是我们在保存完所有通用寄存器之后，进行`sp`寄存器与 `CSR` 寄存器的保存前的准备工作，我们需要把之前保存在 `sscratch` 寄存器中的 `sp` 值，读取出来，存入到 `s0` 寄存器中，由于无法直接将`CSR`寄存器的值存入到栈中，因此我们需要先将`sp`值存入到一个通用寄存器中(这里选择`s0`)，然后再通过`STORE`指令将`s0`寄存器的值存入到栈中对应的`trapframe`结构体中的`sp`字段中。
+
+#### 3. save all 里面保存了 stval scause 这些 csr，而在 restore all 里面却不还原它们，那这样 store 的意义何在呢？
+
+##### (1) `SAVE_ALL`和`RESTORE_ALL`对于`CSR`寄存器的保存与还原
+
+SAVE_ALL 里面完整保存了四个 CSR 寄存器：`sstatus`、`sepc`、`stval`（即为 `sbadaddr`）和 `scause`。这些寄存器保存了中断发生时的处理器状态和异常信息。当中断或异常发生时，硬件会自动将相关信息存储到这些 CSR 寄存器中，以便操作系统能够正确地处理中断或异常。
+```assembly 
+    csrrw s0, sscratch, x0
+    csrr s1, sstatus
+    csrr s2, sepc
+    csrr s3, sbadaddr
+    csrr s4, scause
+
+    STORE s0, 2*REGBYTES(sp)
+    STORE s1, 32*REGBYTES(sp)
+    STORE s2, 33*REGBYTES(sp)
+    STORE s3, 34*REGBYTES(sp)
+    STORE s4, 35*REGBYTES(sp)
+```
+
+`RESTORE_ALL` 只还原了 `sstatus` 和 `sepc`，而没有还原 `stval` 和 `scause`。
+
+```assembly 
+    .macro RESTORE_ALL
+
+    LOAD s1, 32*REGBYTES(sp)
+    LOAD s2, 33*REGBYTES(sp)
+
+    csrw sstatus, s1
+    csrw sepc, s2
+```
+
+##### (2) 保存 `stval` 和 `scause` 的意义
+
+保存 `stval` 和 `scause` (以及`sepc`)的主要目的是为了在异常处理过程中能够访问和分析这些信息。当中断/异常发生时，硬件会自动把原因码填入 `scause`，把相关地址填入 `stval`。它们是硬件为我们生成的“案情报告”。软件（我们的中断处理程序）的责任是读取这份报告，搞清楚发生了什么事，以便做出正确的处理。在我们C语言所处理的`trap.c`中的异常处理函数（如 `exception_handler`）中，这些寄存器的值可以被用来确定异常的类型和原因，从而采取相应的处理措施。
+
+##### (3) 不还原 `stval` 和 `scause` 的原因:
+
+这是因为我们**中断处理完成后就不需要恢复了**：`stval` 和 `scause` 主要用于我们`trap.c`中异常处理期间的诊断和决策。一旦我们的异常处理完成，这些寄存器的值就不再需要恢复，因为它们只在异常发生时有意义。当下一次Trap发生时，硬件会自动用新的报告内容覆盖掉 scause 和 stval 寄存器的旧值，因此没有必要在恢复上下文时还原它们。
+
+
 
 
 
