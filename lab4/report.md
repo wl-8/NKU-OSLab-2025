@@ -362,3 +362,158 @@ repeat:
    - 保证总能找到可用的PID
 
 **结论**：uCore 的 PID 分配机制能够保证每个新 fork 的线程都有唯一的 ID。
+
+---
+
+## 扩展练习 Challenge
+
+### Challenge：说明语句 `local_intr_save(intr_flag); ... local_intr_restore(intr_flag);` 是如何实现开关中断的
+
+#### 实现代码
+
+位于 `kern/sync/sync.h`：
+
+```c
+static inline bool __intr_save(void) {
+    if (read_csr(sstatus) & SSTATUS_SIE) {
+        intr_disable();  // 关闭中断
+        return 1;
+    }
+    return 0;
+}
+
+static inline void __intr_restore(bool flag) {
+    if (flag) {
+        intr_enable();  // 恢复中断
+    }
+}
+
+#define local_intr_save(x) \
+    do {                   \
+        x = __intr_save(); \
+    } while (0)
+
+#define local_intr_restore(x) __intr_restore(x);
+```
+
+#### 工作原理
+
+**步骤1：保存中断状态并关闭中断**
+```c
+bool intr_flag;
+local_intr_save(intr_flag);
+```
+
+展开后：
+```c
+intr_flag = __intr_save();
+```
+
+`__intr_save()` 的逻辑：
+```c
+if (read_csr(sstatus) & SSTATUS_SIE) {
+    // SIE位为1，说明中断当前是开启的
+    intr_disable();  // 关闭中断（清除SIE位）
+    return 1;        // 返回1表示之前中断是开启的
+}
+return 0;  // 返回0表示之前中断就是关闭的
+```
+
+**步骤2：执行临界区代码**
+```c
+{
+    // 临界区代码
+    // 此时中断已关闭，不会被打断
+}
+```
+
+**步骤3：恢复中断状态**
+```c
+local_intr_restore(intr_flag);
+```
+
+展开后：
+```c
+__intr_restore(intr_flag);
+```
+
+`__intr_restore()` 的逻辑：
+```c
+if (flag) {
+    // flag=1，说明之前中断是开启的
+    intr_enable();  // 重新开启中断（设置SIE位）
+}
+// flag=0，说明之前中断就是关闭的，保持关闭
+```
+
+#### 底层实现
+
+**intr_disable() 和 intr_enable()**：
+
+```c
+void intr_enable(void) {
+    set_csr(sstatus, SSTATUS_SIE);  // 设置SIE位
+}
+
+void intr_disable(void) {
+    clear_csr(sstatus, SSTATUS_SIE);  // 清除SIE位
+}
+```
+
+**RISC-V 的 sstatus 寄存器**：
+- `SIE` (Supervisor Interrupt Enable) 位控制中断开关
+- SIE=1：中断开启
+- SIE=0：中断关闭
+
+#### 为什么不直接 disable/enable？
+
+**错误的做法**：
+```c
+intr_disable();  // 关中断
+{
+    // 临界区
+}
+intr_enable();  // 开中断
+```
+
+**问题**：
+```
+假设调用前中断就是关闭的：
+  intr_disable()  → 中断关闭（OK）
+  临界区...
+  intr_enable()   → 中断开启（错误！）
+
+结果：改变了原来的中断状态！
+```
+
+**正确的做法**：
+```c
+local_intr_save(intr_flag);  // 保存状态并关中断
+{
+    // 临界区
+}
+local_intr_restore(intr_flag);  // 恢复原来的状态
+```
+
+**保证**：退出临界区后，中断状态与进入前完全一致。
+
+#### 应用场景
+
+在 `do_fork` 中：
+```c
+bool intr_flag;
+local_intr_save(intr_flag);
+{
+    proc->pid = get_pid();              // 原子操作1
+    hash_proc(proc);                    // 原子操作2
+    list_add(&proc_list, &(proc->list_link));  // 原子操作3
+    nr_process++;                       // 原子操作4
+}
+local_intr_restore(intr_flag);
+```
+
+如果不关中断：
+```
+执行到一半 → 时钟中断 → 调度器查看proc_list
+→ 看到不完整的进程 → 崩溃
+```
