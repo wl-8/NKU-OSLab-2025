@@ -1,8 +1,83 @@
-# Lab4：进程管理
+# 2025 操作系统 Lab4
+> 团队成员: 2313857陈天祺 & 2311208魏来 & 2312166王旭
 
-## 练习2：为新创建的内核线程分配资源（2311208）
+## 实验目的
+---
 
-### 2.1 实现代码
+- 了解虚拟内存管理的基本结构，掌握虚拟内存的组织与管理方式
+- 了解内核线程创建/执行的管理过程
+- 了解内核线程的切换和基本调度过程
+
+## 实验内容
+---
+
+### 练习0：填写已有实验
+
+本实验依赖实验2/3。请把你做的实验2/3的代码填入本实验中代码中有“LAB2”,“LAB3”的注释相应部分。
+
+### 练习1：分配并初始化一个进程控制块
+
+`alloc_proc` 函数（位于 kern/process/proc.c ）负责分配并返回一个新的 `struct proc_struct` 结构，用于存储新建立的内核线程的管理信息。ucore需要对这个结构进行最基本的初始化，你需要完成这个初始化过程。
+
+请在实验报告中简要说明你的设计实现过程，并回答如下问题：
+
+**请说明 `proc_struct` 中 `struct context context` 和 `struct trapframe *tf` 成员变量含义和在本实验中的作用是啥？（==提示：看代码和编程调试可以判断出来==）**
+
+### 练习2：
+
+创建一个内核线程需要分配和设置好很多资源。`kernel_thread` 函数通过调用 `do_fork` 函数完成具体内核线程的创建工作。
+
+`do_kernel`函数会调用 `alloc_proc` 函数来分配并初始化一个进程控制块，但 `alloc_proc` 只是找到了一小块内存用以记录进程的必要信息，并没有实际分配这些资源。ucore 一般通过 `do_fork` 实际创建新的内核线程。 
+
+`do_fork` 的作用是，创建当前内核线程的一个副本，它们的执行上下文、代码、数据都一样，但是存储位置不同。因此，我们实际需要"fork"的东西就是 stack 和 trapframe。在这个过程中，需要给新内核线程分配资源，并且复制原进程的状态。你需要完成在 kern/process/proc.c 中的 `do_fork` 函数中的处理过程。它的大致执行步骤包括：
+
+1. 调用alloc_proc，首先获得一块用户信息块。
+2. 为进程分配一个内核栈。
+3. 复制原进程的内存管理信息到新进程（但内核线程不必做此事）
+4. 复制原进程上下文到新进程
+5. 将新进程添加到进程列表
+6. 唤醒新进程
+7. 返回新进程号
+
+请在实验报告中简要说明你的设计实现过程并回答如下问题：
+
+**请说明 ucore 是否做到给每个新 fork 的线程一个唯一的 id？请说明你的分析和理由。**
+
+### 练习3：
+
+`proc_run` 用于将指定的进程切换到 CPU 上运行。它的大致执行步骤包括：
+
+1. 检查要切换的进程是否与当前正在运行的进程相同，如果相同则不需要切换。
+2. 禁用中断。你可以使用 /kern/sync/sync.h 中定义好的宏 `local_intr_save(x)` 和 `local_intr_restore(x)` 来实现关、开中断。
+3. 切换当前进程为要运行的进程。
+4. 切换页表，以便使用新进程的地址空间。/libs/riscv.h 中提供了 `lsatp`(unsigned int pgdir) 函数，可实现修改 SATP 寄存器值的功能。
+5. 实现上下文切换。/kern/process 中已经预先编写好了 switch.S，其中定义了 `switch_to()` 函数。可实现两个进程的 context 切换。
+6. 允许中断。
+
+请回答如下问题：
+**在本实验的执行过程中，创建且运行了几个内核线程？**
+
+完成代码编写后，编译并运行代码：`make qemu`
+
+### Challenge1：
+
+1. 说明语句local_intr_save(intr_flag);....local_intr_restore(intr_flag);是如何实现开关中断的？
+
+2. `get_pte()` 函数（位于kern/mm/pmm.c）用于在页表中查找或创建页表项，从而实现对指定线性地址对应的物理页的访问和映射操作。这在操作系统中的分页机制下，是实现虚拟内存与物理内存之间映射关系非常重要的内容。
+    2.1 `get_pte()` 函数中有两段形式类似的代码， 结合sv32，sv39，sv48的异同，解释这两段代码为什么如此相像。
+    2.2 目前 `get_pte()` 函数将页表项的查找和页表项的分配合并在一个函数里，你认为这种写法好吗？有没有必要把两个功能拆开？
+
+## 实验过程
+---
+
+### 练习1
+
+
+
+---
+### 练习2
+
+#### 2.1 实现代码
 
 `do_fork` 函数是创建新进程的核心函数，位于 `kern/process/proc.c`：
 
@@ -67,9 +142,9 @@ bad_fork_cleanup_proc:
 }
 ```
 
-### 2.2 设计实现过程
+#### 2.2 设计实现过程
 
-#### 2.2.1 总体流程图
+##### 2.2.1 总体流程图
 
 ```
 do_fork开始
@@ -99,7 +174,7 @@ do_fork开始
 [7] 返回新进程的PID
 ```
 
-#### 2.2.2 关键步骤详解
+##### 2.2.2 关键步骤详解
 
 **步骤1：分配进程控制块**
 ```c
@@ -192,7 +267,7 @@ wakeup_proc(proc);
 ret = proc->pid;  // 父进程得到子进程的PID
 ```
 
-#### 2.2.3 错误处理机制：链式清理
+##### 2.2.3 错误处理机制：链式清理
 
 ```c
 bad_fork_cleanup_kstack:
@@ -212,11 +287,11 @@ bad_fork_cleanup_proc:
 2. **步骤3失败**：跳到`bad_fork_cleanup_kstack`，先释放kstack，再释放proc
 3. **步骤1失败**：直接跳到`fork_out`，什么都不清理
 
-### 2.3 思考题：ucore 是否做到给每个新 fork 的线程一个唯一的 id？
+#### 2.3 思考题：ucore 是否做到给每个新 fork 的线程一个唯一的 id？
 
 **答案：是的，uCore 能够保证每个新 fork 的线程都有唯一的 PID。**
 
-#### 2.3.1 get_pid() 函数分析
+##### 2.3.1 get_pid() 函数分析
 
 ```c
 static int get_pid(void) {
@@ -254,7 +329,7 @@ static int get_pid(void) {
 }
 ```
 
-#### 2.3.2 算法原理
+##### 2.3.2 算法原理
 
 **核心思想**：使用静态变量 `last_pid` 记录上次分配的PID，每次分配时递增并检查冲突。
 
@@ -332,7 +407,7 @@ repeat:
 - **最坏情况**：O(n) - 慢速路径，需要遍历所有进程
 - **平均情况**：接近O(1) - 安全区间机制减少了重复扫描
 
-#### 2.3.4 唯一性保证
+##### 2.3.4 唯一性保证
 
 **三重保证机制**：
 
@@ -364,12 +439,155 @@ repeat:
 **结论**：uCore 的 PID 分配机制能够保证每个新 fork 的线程都有唯一的 ID。
 
 ---
+### 练习3
 
-## 扩展练习 Challenge
+#### 3.1 实现流程
 
-### Challenge：说明语句 `local_intr_save(intr_flag); ... local_intr_restore(intr_flag);` 是如何实现开关中断的
+1. 调用宏 `local_intr_save` 禁用中断
+```c
+    bool intr_flag;     // 中断状态
+    local_intr_save(intr_flag); 
+```
+2. 切换当前运行进程
+```c
+    struct proc_struct *prev = current;  // 保存当前进程指针
+    current = proc;                      // 更新当前进程指针 
+```
+3. 切换页表以使用新进程的地址空间（通过修改 `satp` 寄存器值）
+```c
+lsatp(proc->pgdir);                  // 切换页表 - 修改 satp 寄存器的值
+```
+4. 切换进程上下文
+```c
+switch_to(&(prev->context), &(proc->context));  // 进程上下文切换
+```
+5. 恢复中断状态
+```c
+local_intr_restore(intr_flag);       // 恢复中断状态
+```
 
-#### 实现代码
+#### 3.2 关于内核线程
+
+本实验中创建并运行了 **2 个** 内核线程，分别是空闲进程 `idleproc` 和初始进程 `initproc`。具体流程如下：
+
+##### 3.2.1 系统初始化
+
+系统内核启动后，在 `kern_init` 函数中调用 `proc_init` 初始化进程管理系统。
+
+##### 3.2.2 进程管理系统初始化
+
+1. 创建空闲进程
+```c
+// 创建空闲进程
+if ((idleproc = alloc_proc()) == NULL) {
+    panic("cannot alloc idleproc.\n");
+}
+// 设置空闲进程属性
+idleproc->pid = 0;
+idleproc->state = PROC_RUNNABLE;
+idleproc->kstack = (uintptr_t)bootstack;
+idleproc->need_resched = 1;
+set_proc_name(idleproc, "idle");
+current = idleproc;  // 设为当前进程
+```
+
+2. 创建初始进程
+```c
+// 通过 kernel_thread 创建初始进程
+int pid = kernel_thread(init_main, "Hello world!!", 0);
+initproc = find_proc(pid);
+set_proc_name(initproc, "init");
+```
+
+##### 3.2.3 内核线程创建
+
+1. 调用 `kernel_thread()` 函数
+
+2. 设置陷阱帧 `trapframe`
+
+3. 调用 `do_fork()` 创建进程
+
+##### 3.2.4 进程运行
+
+1. 进入 `cpu_idle` 开始进程调度
+
+2. 进程切换
+    - `schedule()` 选择要运行的进程
+    - `proc_run()` 执行进程切换
+    - `switch_to()` 切换进程上下文
+
+3. 内核线程(初始进程)执行
+    - 跳转内核入口点 `forkret()`
+    - 再跳转 `init_main` 执行并打印消息
+
+---
+
+#### 3.3 程序运行
+
+```bash
+OpenSBI v0.4 (Jul  2 2019 11:53:53)
+   ____                    _____ ____ _____
+  / __ \                  / ____|  _ \_   _|
+ | |  | |_ __   ___ _ __ | (___ | |_) || |
+ | |  | | '_ \ / _ \ '_ \ \___ \|  _ < | |
+ | |__| | |_) |  __/ | | |____) | |_) || |_
+  \____/| .__/ \___|_| |_|_____/|____/_____|
+        | |
+        |_|
+
+Platform Name          : QEMU Virt Machine
+Platform HART Features : RV64ACDFIMSU
+Platform Max HARTs     : 8
+Current Hart           : 0
+Firmware Base          : 0x80000000
+Firmware Size          : 112 KB
+Runtime SBI Version    : 0.1
+
+PMP0: 0x0000000080000000-0x000000008001ffff (A)
+PMP1: 0x0000000000000000-0xffffffffffffffff (A,R,W,X)
+DTB Init
+HartID: 0
+DTB Address: 0x82200000
+Physical Memory from DTB:
+  Base: 0x0000000080000000
+  Size: 0x0000000008000000 (128 MB)
+  End:  0x0000000087ffffff
+DTB init completed
+(THU.CST) os is loading ...
+
+Special kernel symbols:
+  entry  0xc020004a (virtual)
+  etext  0xc0203e4e (virtual)
+  edata  0xc0209030 (virtual)
+  end    0xc020d4f0 (virtual)
+Kernel executable memory footprint: 54KB
+memory management: default_pmm_manager
+physcial memory map:
+  memory: 0x08000000, [0x80000000, 0x87ffffff].
+vapaofset is 18446744070488326144
+check_alloc_page() succeeded!
+check_pgdir() succeeded!
+check_boot_pgdir() succeeded!
+use SLOB allocator
+kmalloc_init() succeeded!
+check_vma_struct() succeeded!
+check_vmm() succeeded.
+++ setup timer interrupts
+this initproc, pid = 1, name = "init"
+To U: "Hello world!!".
+To U: "en.., Bye, Bye. :)"
+kernel panic at kern/process/proc.c:457:
+    process exit!!.
+
+Welcome to the kernel debug monitor!!
+Type 'help' for a list of commands.
+```
+
+### Challenge1
+
+#### 问题1：说明语句 `local_intr_save(intr_flag); ... local_intr_restore(intr_flag);` 是如何实现开关中断的
+
+##### 1. 实现代码
 
 位于 `kern/sync/sync.h`：
 
@@ -396,7 +614,7 @@ static inline void __intr_restore(bool flag) {
 #define local_intr_restore(x) __intr_restore(x);
 ```
 
-#### 工作原理
+##### 2. 工作原理
 
 **步骤1：保存中断状态并关闭中断**
 ```c
@@ -446,7 +664,7 @@ if (flag) {
 // flag=0，说明之前中断就是关闭的，保持关闭
 ```
 
-#### 底层实现
+##### 3. 底层实现
 
 **intr_disable() 和 intr_enable()**：
 
@@ -465,7 +683,7 @@ void intr_disable(void) {
 - SIE=1：中断开启
 - SIE=0：中断关闭
 
-#### 为什么不直接 disable/enable？
+##### 4. 为什么不直接 disable/enable？
 
 **错误的做法**：
 ```c
@@ -497,7 +715,7 @@ local_intr_restore(intr_flag);  // 恢复原来的状态
 
 **保证**：退出临界区后，中断状态与进入前完全一致。
 
-#### 应用场景
+##### 5. 应用场景
 
 在 `do_fork` 中：
 ```c
@@ -517,3 +735,97 @@ local_intr_restore(intr_flag);
 执行到一半 → 时钟中断 → 调度器查看proc_list
 → 看到不完整的进程 → 崩溃
 ```
+
+
+#### 问题2：深入理解 `get_pte()` 函数（位于kern/mm/pmm.c）
+
+##### 子问题1： `get_pte()` 函数中有两段形式类似的代码， 结合sv32，sv39，sv48的异同，解释这两段代码为什么如此相像。
+
+`get_pte()` 中有相似代码：
+
+1. 处理一级页目录
+```
+pde_t *pdep1 = &pgdir[PDX1(la)];
+if (!(*pdep1 & PTE_V)) {
+    struct Page *page;
+    if (!create || (page = alloc_page()) == NULL) {
+        return NULL;
+    }
+    set_page_ref(page, 1);
+    uintptr_t pa = page2pa(page);
+    memset(KADDR(pa), 0, PGSIZE);
+    *pdep1 = pte_create(page2ppn(page), PTE_U | PTE_V);
+}
+```
+
+2. 处理二级页目录
+```
+pde_t *pdep0 = &((pte_t *)KADDR(PDE_ADDR(*pdep1)))[PDX0(la)];
+if (!(*pdep0 & PTE_V)) {
+    struct Page *page;
+    if (!create || (page = alloc_page()) == NULL) {
+        return NULL;
+    }
+    set_page_ref(page, 1);
+    uintptr_t pa = page2pa(page);
+    memset(KADDR(pa), 0, PGSIZE);
+    *pdep0 = pte_create(page2ppn(page), PTE_U | PTE_V);
+}
+```
+
+这两段代码相似是因为 RISC-V 多级页表的层次化结构：
+
+1. **sv32**（32位虚拟地址）：采用 2 级页表
+    - 第1级：页目录表 (Page Directory)
+    - 第2级：页表 (Page Table)
+2. **sv39**（39位虚拟地址）：采用 3 级页表
+    - 第1级：页全局目录 (Page Global Directory)
+    - 第2级：页目录表 (Page Directory)
+    - 第3级：页表 (Page Table)
+3. **sv48**（48位虚拟地址）：采用 4 级页表
+    - 增加更多层次
+
+每一级页表的操作逻辑完全相同：
+
+- 检查当前级别的页表项是否有效 (`PTE_V` 标志)
+- 如果无效且需要创建，则分配新页面
+- 初始化页面内容为 0
+- 设置页表项指向新分配的页面
+
+这种统一的层次化设计使得不同级别的页表操作完全一致，对应代码也就风格相似。
+
+##### 子问题2：目前 `get_pte()` 函数将页表项的查找和页表项的分配合并在一个函数里，你认为这种写法好吗？有没有必要把两个功能拆开？
+
+当前设计的优点：
+
+1. **接口简洁**：一个函数完成查找和创建两种功能，调用方便
+2. **原子性操作**：避免了查找和创建之间的竞争条件
+3. **减少重复遍历**：不需要两次遍历页表层次结构
+
+当前设计的缺点：
+
+1. **功能耦合**：违反了单一职责原则
+2. **参数语义模糊**：`create` 参数使函数行为不够明确
+3. **错误处理复杂**：需要在一个函数中处理多种失败情况
+4. **代码可读性**：函数逻辑相对复杂
+
+可以选择把两种处理逻辑拆分如下：
+
+```
+// 页表项查找函数
+pte_t *find_pte(pde_t *pgdir, uintptr_t la);
+
+// 页表项创建函数  
+pte_t *create_pte(pde_t *pgdir, uintptr_t la);
+
+// 组合函数（保持兼容性）
+pte_t *get_pte(pde_t *pgdir, uintptr_t la, bool create) {
+    pte_t *pte = find_pte(pgdir, la);
+    if (pte == NULL && create) {
+        pte = create_pte(pgdir, la);
+    }
+    return pte;
+}
+```
+
+

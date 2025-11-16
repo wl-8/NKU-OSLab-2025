@@ -9,8 +9,11 @@
 #include <stdio.h>
 #include <trap.h>
 #include <vmm.h>
+#include <sbi.h>
 
 #define TICK_NUM 100
+
+static int num = 0;
 
 static void print_ticks()
 {
@@ -111,6 +114,23 @@ void interrupt_handler(struct trapframe *tf)
         // clear_csr(sip, SIP_STIP);
 
         /*LAB3 请补充你在lab3中的代码 */ 
+        // 设置下次时钟中断
+        clock_set_next_event();
+
+        // 计数器加一
+        ticks++;
+        
+        // 每 100 次时钟中断打印一次
+        if(ticks >= 100){
+            print_ticks();  
+            num++;
+            ticks = 0;
+        }
+        
+        // 打印10次后关机
+        if(num == 10){
+            sbi_shutdown();
+        }
         break;
     case IRQ_H_TIMER:
         cprintf("Hypervisor software interrupt\n");
