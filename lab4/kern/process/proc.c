@@ -117,7 +117,7 @@ alloc_proc(void)
     struct proc_struct *proc = kmalloc(sizeof(struct proc_struct));  // 分配进程控制块内存
     if (proc != NULL)
     {
-        // LAB4:EXERCISE1 YOUR CODE
+        // LAB4:EXERCISE1 2312166
         // TODO LAB4:练习1 你的代码
         /*
          * below fields in proc_struct need to be initialized
@@ -137,7 +137,18 @@ alloc_proc(void)
          *       uint32_t flags;                             // Process flag - 进程标志
          *       char name[PROC_NAME_LEN + 1];               // Process name - 进程名称
          */
-        
+        proc->state = PROC_UNINIT;      // 初始状态为未初始化uninitialized,表示PCB已分配但未就绪
+        proc->pid = -1;                 // PID未分配，设为 -1
+        proc->runs = 0;                 // 运行次数初始化为0
+        proc->kstack = 0;               // 内核栈未分配,内核栈基地址设为0
+        proc->need_resched = 0;         // 不需要重新调度
+        proc->parent = NULL;            // 无父进程
+        proc->mm = NULL;                // 内核线程共享内核地址空间,无内存管理结构体,为NULL
+        memset(&(proc->context), 0, sizeof(struct context)); // 上下文结构体清零
+        proc->tf = NULL;                // trapframe指针初始化为NULL
+        proc->pgdir = boot_pgdir_pa;    // 页目录表基地址初始化为boot_pgdir_pa(物理地址,因为后续进程转换时涉及到存放入satp中,而satp所需要的是PPN物理页号),使用页表基址(内核线程共享)
+        proc->flags = 0;                // 进程标志初始化为0
+        memset(proc->name, 0, sizeof(proc->name)); // 进程名清零
     }
     return proc;  // 返回分配的进程控制块指针（可能为 NULL）
 }
