@@ -72,6 +72,110 @@
 
 ### 练习1
 
+#### 1.1 实现代码
+
+`alloc_proc` 函数的主要作用是通过利用kmalloc()函数，在内核空间内为`struct proc_struct`结构体分配一片空间，并对这个新分配的进程控制块的各个成员变量进行最基本的初始化，初始化管理这个新建立的内核线程的管理信息。
+
+```c
+// alloc_proc - alloc a proc_struct and init all fields of proc_struct
+static struct proc_struct *
+alloc_proc(void)
+{
+    struct proc_struct *proc = kmalloc(sizeof(struct proc_struct));
+    if (proc != NULL)
+    {
+        // LAB4:EXERCISE1 2312166
+        proc->state = PROC_UNINIT;      // 初始状态为未初始化uninitialized,表示PCB已分配但未就绪
+        proc->pid = -1;                 // PID未分配，设为 -1
+        proc->runs = 0;                 // 运行次数初始化为0
+        proc->kstack = 0;               // 内核栈未分配,内核栈基地址设为0
+        proc->need_resched = 0;         // 不需要重新调度
+        proc->parent = NULL;            // 无父进程
+        proc->mm = NULL;                // 内核线程共享内核地址空间,无内存管理结构体,为NULL
+        memset(&(proc->context), 0, sizeof(struct context)); // 上下文结构体清零
+        proc->tf = NULL;                // trapframe指针初始化为NULL
+        proc->pgdir = boot_pgdir_pa;    // 页目录表基地址初始化为boot_pgdir_pa
+        proc->flags = 0;                // 进程标志初始化为0
+        memset(proc->name, 0, sizeof(proc->name)); // 进程名清零
+
+    }
+    return proc;
+}
+```
+
+#### 1.2 几个关键的成员变量初始化说明
+- `proc->mm = NULL;`：由于我们本次创建的是内核线程,而他们是共享内核地址空间，不需要单独的内存管理结构体的，因此我们将`proc->mm = NULL;`将其初始化为NULL,后续在创建用户进程时会为其分配单独的内存管理结构体。
+
+- `struct context context`：用于保存进程的`context`上下文信息，包括寄存器状态等。在进程切换时，操作系统会保存当前进程的上下文到这个结构体中，并加载新进程的上下文，从而实现`switch_to`进程切换。我们这里初始化时，通过`memset`将其空间内的内容清零,确保`proc->context`的初始状态是干净的。
+
+- `struct trapframe *tf`：用于保存进程在发生中断或异常时的寄存器状态。我们这里初始化时,将其指针设为`NULL`,表示当前还没有为该进程分配中断帧空间。后续在创建内核线程时,会在内核栈顶部为其分配`trapframe`空间，并将`proc->tf`指向该空间。
+
+- `proc->pgdir = boot_pgdir_pa;`：由于内核线程共享内核地址空间，因此我们将其页目录表基地址初始化为`boot_pgdir_pa`，即内核的页目录表地址。这里我们采用的是物理地址`boot_pgdir_pa`,因为后续进程转换时找到新进程并调用`proc_run`函数时,涉及到更改页表基址的操作,采用的是`lsatp(proc->pgdir); `修改存放入satp寄存器中,而satp所需要的是PPN物理页号,因此我们将其初始化为物理地址`boot_pgdir_pa`。
+
+#### 1.3 `proc_struct`中`struct context context`和`struct trapframe *tf`这两个成员变量的含义和在本实验中的作用
+
+##### (1) `struct context context`的含义和作用:
+- 含义：`struct context`结构体用于保存进程的上下文信息，存储`ra（返回地址）`、`sp（栈指针）`以及`s0-s11`寄存器。这是因为寄存器可以分为调用者保存（`caller-saved`）寄存器和被调用者保存（`callee-saved`）寄存器。而我们的内核进程切换是通过一个函数`switch_to`实现的，所以编译器会自动帮助我们生成保存和恢复调用者保存（`caller-saved`）寄存器的代码，因此在实际的进程切换过程中,我们只需要保存被调用者保存（`callee-saved`）寄存器就好了。
+在进程切换时，操作系统会保存当前进程的上下文到这个结构体中，并加载新进程的上下文，从而实现`switch_to`进程切换。
+
+```c
+struct context 
+{
+    uintptr_t ra;   // Return Address (返回地址)
+    uintptr_t sp;   // Stack Pointer (栈指针)
+    uintptr_t s0;   // Saved Registers (s0-s11，被调用者保存寄存器)
+    uintptr_t s1;
+    uintptr_t s2;
+    uintptr_t s3;
+    uintptr_t s4;
+    uintptr_t s5;
+    uintptr_t s6;
+    uintptr_t s7;
+    uintptr_t s8;
+    uintptr_t s9;
+    uintptr_t s10;
+    uintptr_t s11;
+};
+```
+
+
+
+- 作用：在本实验中，`context`成员变量用于保存内核线程的寄存器状态。当内核线程被调度运行时，操作系统会将当前线程的寄存器状态保存到`context`中，并加载新线程的寄存器状态，从而实现线程切换。
+
+1. `context`作为进程切换的核心,当调度器调用`proc_run`时，会执行`switch_to(&(prev->context), &(proc->context))`。`switch_to`保存当前进程`from`的`context`，恢复目标进程`to`的`context`，实现CPU控制权的转移。
+
+2. 初始化设置几个关键状态：alloc_proc中memset清零，确保初始context为空（无有效状态）。实际设置在copy_thread中：proc->context.ra = (uintptr_t)forkret; 和 proc->context.sp = (uintptr_t)(proc->tf);设置好`switch_to`返回后执行的位置`forkret`。
+
+3. 与trapframe的区别：context只保存切换必要状态（高效），而tf保存中断时的完整状态。
+
+##### (2) `struct trapframe *tf`的含义和作用:
+
+- 含义:`tf`是一个指针，指向`struct trapframe`结构体，它包含所有通用寄存器`gpr`(如a0-sp)和四个`CSR`状态寄存器（`status`）、程序计数器（`epc`）、异常信息（`badvaddr`, `cause`）等。
+它保存中断/异常发生时的完整CPU状态，用于从中断恢复执行。
+
+```c
+struct trapframe
+{
+    struct pushregs gpr;
+    uintptr_t status;
+    uintptr_t epc;
+    uintptr_t badvaddr;
+    uintptr_t cause;
+};
+```
+
+- 作用：
+
+1. 中断恢复的工具：内核线程运行时，如果发生中断，完整保存`tf`中断帧；中断处理后，forkrets(current->tf)恢复tf中的所有寄存器，继续执行。
+
+2. 初始化设置关键状态：`alloc_proc`中设为NULL，表示未分配。实际分配和设置在`copy_thread`中：`proc->tf = (struct trapframe *)(proc->kstack + KSTACKSIZE - sizeof(struct trapframe));`在内核栈顶分配，然后复制传入的tf模板，并调整字段（如a0 = 0表示子进程），进行状态设置。
+
+3. 新内核线程启动时，从`kernel_thread_entry`开始，依赖tf恢复初始状态,设置内核线程的参数和函数指针`s0`/`s1`,用于模拟“从中断返回”来启动线程。
+
+
+
+
+
 
 
 ---
