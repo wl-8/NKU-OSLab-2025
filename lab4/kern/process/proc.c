@@ -380,9 +380,9 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
     }
     ret = -E_NO_MEM;  // 设置返回值：内存不足
     // LAB4:EXERCISE2 2311208
-    // LAB4:练习2 2311208
+    // TODO LAB4:练习2 2311208
     /*
-     * Some Useful MACROs, Functions and DEFINEs, you can use them in below implementation.
+     * Some Useful MACwROs, Functions and DEFINEs, you can use them in below implementation.
      * 一些有用的宏、函数和定义，你可以在下面的实现中使用它们。
      * MACROs or Functions:
      * 宏或函数：
