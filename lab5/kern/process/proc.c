@@ -149,7 +149,7 @@ alloc_proc(void)
         proc->flags = 0;                // 进程标志初始化为0
         memset(proc->name, 0, sizeof(proc->name)); // 进程名清零
 
-        // LAB5 YOUR CODE : (update LAB4 steps)
+        // LAB5 YOUR CODE : (update LAB4 steps) 2313857
         /*
          * below fields(add in LAB5) in proc_struct need to be initialized
          * 下面是 LAB5 中 proc_struct 新增的字段，需要初始化：
@@ -535,7 +535,7 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
         goto fork_out; // 分配proc_struct失败，直接返回
     }
 
-    // LAB5 update: 设置子进程的父进程为当前进程，确保当前进程不在等待状态
+    // LAB5 update: 设置子进程的父进程为当前进程，确保当前进程不在等待状态 2313857
     proc->parent = current;         // 设置父进程指针
     assert(current->wait_state == 0); // 确保父进程当前不在等待状态
     
@@ -557,7 +557,7 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
     {
         proc->pid = get_pid();
         hash_proc(proc);
-        // LAB5 update: 使用 set_links 设置进程间的关系链接
+        // LAB5 update: 使用 set_links 设置进程间的关系链接 2313857
         // set_links 会将进程加入 proc_list，并设置父子/兄弟关系
         set_links(proc);
     }
@@ -567,7 +567,7 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
     //    7. set ret vaule using child proc's pid
     ret = proc->pid;
 
-    // LAB5 YOUR CODE : (update LAB4 steps)
+    // LAB5 YOUR CODE : (update LAB4 steps) 2313857
     // TIPS: you should modify your written code in lab4(step1 and step5), not add more code.
     /* Some Functions
      *    set_links:  set the relation links of process.  ALSO SEE: remove_links:  lean the relation links of process
