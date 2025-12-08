@@ -37,6 +37,10 @@
 static void check_vmm(void);
 static void check_vma_struct(void);
 
+// 全局变量定义
+volatile unsigned int pgfault_num = 0;  // 页面错误计数器
+struct mm_struct *check_mm_struct = NULL;  // 用于测试的内存管理结构
+
 // mm_create -  alloc a mm_struct & initialize it.
 struct mm_struct *
 mm_create(void)
@@ -200,6 +204,36 @@ int mm_map(struct mm_struct *mm, uintptr_t addr, size_t len, uint32_t vm_flags,
 
 out:
     return ret;
+}
+
+/* *
+ * do_pgfault - 处理页面错误异常
+ * @mm: 当前进程的内存管理结构
+ * @error_code: 错误代码（异常原因）
+ * @addr: 触发页面错误的虚拟地址
+ * @return: 0 表示成功处理，负数表示错误
+ * 
+ * 这个函数在 Lab3 中实现，用于处理页面错误
+ * Lab5 目前不需要实现按需分页，所以简化处理
+ * //! 另增
+ */
+int do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
+    // Lab5: 简化的页面错误处理
+    // 如果访问的地址不在有效的虚拟内存区域内，返回错误
+    if (mm == NULL) {
+        return -E_INVAL;
+    }
+    
+    // 查找包含该地址的虚拟内存区域
+    struct vma_struct *vma = find_vma(mm, addr);
+    if (vma == NULL || vma->vm_start > addr) {
+        // 访问的地址不在任何有效的 VMA 中
+        return -E_INVAL;
+    }
+    
+    // Lab5 不实现按需分页，所以如果到这里说明页面确实不存在
+    // 返回错误，让上层处理（终止进程）
+    return -E_INVAL;
 }
 
 int dup_mmap(struct mm_struct *to, struct mm_struct *from)

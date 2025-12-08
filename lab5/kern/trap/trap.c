@@ -95,6 +95,22 @@ void print_regs(struct pushregs *gpr)
 
 extern struct mm_struct *check_mm_struct;
 
+// pgfault_handler - 页面错误处理函数
+static inline int pgfault_handler(struct trapframe *tf) {
+    extern struct mm_struct *check_mm_struct;
+    if (check_mm_struct != NULL) {
+        // 如果有 check_mm_struct，说明可能是测试代码，尝试处理
+        return do_pgfault(check_mm_struct, tf->cause, tf->tval);
+    }
+    if (current == NULL || current->mm == NULL) {
+        // 没有进程或没有内存管理结构，无法处理页面错误
+        return -E_INVAL;
+    }
+    // 正常的页面错误处理
+    return do_pgfault(current->mm, tf->cause, tf->tval);
+}
+
+//! 另增 CAUSE_FETCH_PAGE_FAULT; CAUSE_LOAD_PAGE_FAULT; CAUSE_STORE_PAGE_FAULT
 void interrupt_handler(struct trapframe *tf)
 {
     intptr_t cause = (tf->cause << 1) >> 1;
@@ -122,6 +138,16 @@ void interrupt_handler(struct trapframe *tf)
          *(2) ticks 计数器自增
          *(3) 每 TICK_NUM 次中断（如 100 次），进行判断当前是否有进程正在运行，如果有则标记该进程需要被重新调度（current->need_resched）
         */
+        // (1) 设置下一次时钟中断
+        clock_set_next_event();
+        
+        // (2) ticks 计数器自增
+        if (++ticks % TICK_NUM == 0) {
+            // (3) 每 TICK_NUM 次中断，检查是否需要调度
+            assert(current != NULL);
+            print_ticks();  // 打印 ticks 信息
+            current->need_resched = 1;  // 标记当前进程需要重新调度
+        }
         break;
     case IRQ_H_TIMER:
         cprintf("Hypervisor software interrupt\n");
@@ -200,12 +226,36 @@ void exception_handler(struct trapframe *tf)
         break;
     case CAUSE_FETCH_PAGE_FAULT:
         cprintf("Instruction page fault\n");
+        if ((ret = pgfault_handler(tf)) != 0) {
+            print_trapframe(tf);
+            if (trap_in_kernel(tf)) {
+                panic("handle pgfault failed in kernel mode. ret=%d\n", ret);
+            }
+            cprintf("killed by kernel.\n");
+            do_exit(-E_KILLED);
+        }
         break;
     case CAUSE_LOAD_PAGE_FAULT:
         cprintf("Load page fault\n");
+        if ((ret = pgfault_handler(tf)) != 0) {
+            print_trapframe(tf);
+            if (trap_in_kernel(tf)) {
+                panic("handle pgfault failed in kernel mode. ret=%d\n", ret);
+            }
+            cprintf("killed by kernel.\n");
+            do_exit(-E_KILLED);
+        }
         break;
     case CAUSE_STORE_PAGE_FAULT:
         cprintf("Store/AMO page fault\n");
+        if ((ret = pgfault_handler(tf)) != 0) {
+            print_trapframe(tf);
+            if (trap_in_kernel(tf)) {
+                panic("handle pgfault failed in kernel mode. ret=%d\n", ret);
+            }
+            cprintf("killed by kernel.\n");
+            do_exit(-E_KILLED);
+        }
         break;
     default:
         print_trapframe(tf);
