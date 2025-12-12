@@ -52,7 +52,7 @@ void sched_init(void)
 {
     list_init(&timer_list);
 
-    sched_class = &default_sched_class;
+    sched_class = &stride_sched_class;  // 使用 Stride 调度器
 
     rq = &__rq;
     rq->max_time_slice = MAX_TIME_SLICE;
@@ -91,14 +91,17 @@ void schedule(void)
     local_intr_save(intr_flag);
     {
         current->need_resched = 0;
+        // 若当前进程仍可运行，将其重新加入就绪队列
         if (current->state == PROC_RUNNABLE)
         {
             sched_class_enqueue(current);
         }
+        // 选择下一个要运行的进程（Stride调度：选stride最小的）
         if ((next = sched_class_pick_next()) != NULL)
         {
             sched_class_dequeue(next);
         }
+        // 若无可调度进程，运行idle进程
         if (next == NULL)
         {
             next = idleproc;
@@ -106,7 +109,7 @@ void schedule(void)
         next->runs++;
         if (next != current)
         {
-            proc_run(next);
+            proc_run(next);  // 切换到选中的进程
         }
     }
     local_intr_restore(intr_flag);

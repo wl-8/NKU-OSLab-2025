@@ -7,13 +7,13 @@
 #include <memlayout.h>
 #include <skew_heap.h>
 
-// process's state in his life cycle
+// 进程生命周期中的状态
 enum proc_state
 {
-    PROC_UNINIT = 0, // uninitialized
-    PROC_SLEEPING,   // sleeping
-    PROC_RUNNABLE,   // runnable(maybe running)
-    PROC_ZOMBIE,     // almost dead, and wait parent proc to reclaim his resource
+    PROC_UNINIT = 0, // 未初始化
+    PROC_SLEEPING,   // 睡眠中
+    PROC_RUNNABLE,   // 可运行（可能正在运行）
+    PROC_ZOMBIE,     // 即将死亡，等待父进程回收资源
 };
 
 struct context
@@ -42,35 +42,35 @@ extern list_entry_t proc_list;
 
 struct proc_struct
 {
-    enum proc_state state;                  // Process state
-    int pid;                                // Process ID
-    int runs;                               // the running times of Proces
-    uintptr_t kstack;                       // Process kernel stack
-    volatile bool need_resched;             // bool value: need to be rescheduled to release CPU?
-    struct proc_struct *parent;             // the parent process
-    struct mm_struct *mm;                   // Process's memory management field
-    struct context context;                 // Switch here to run process
-    struct trapframe *tf;                   // Trap frame for current interrupt
-    uintptr_t pgdir;                        // the base addr of Page Directroy Table(PDT)
-    uint32_t flags;                         // Process flag
-    char name[PROC_NAME_LEN + 1];           // Process name
-    list_entry_t list_link;                 // Process link list
-    list_entry_t hash_link;                 // Process hash list
-    int exit_code;                          // exit code (be sent to parent proc)
-    uint32_t wait_state;                    // waiting state
-    struct proc_struct *cptr, *yptr, *optr; // relations between processes
-    struct run_queue *rq;                   // running queue contains Process
-    list_entry_t run_link;                  // the entry linked in run queue
-    int time_slice;                         // time slice for occupying the CPU
-    skew_heap_entry_t lab6_run_pool;        // FOR LAB6 ONLY: the entry in the run pool
-    uint32_t lab6_stride;                   // FOR LAB6 ONLY: the current stride of the process
-    uint32_t lab6_priority;                 // FOR LAB6 ONLY: the priority of process, set by lab6_set_priority(uint32_t)
+    enum proc_state state;                  // 进程状态
+    int pid;                                // 进程ID
+    int runs;                               // 进程运行次数
+    uintptr_t kstack;                       // 进程内核栈
+    volatile bool need_resched;             // 是否需要重新调度以释放CPU
+    struct proc_struct *parent;             // 父进程
+    struct mm_struct *mm;                   // 进程的内存管理字段
+    struct context context;                 // 切换到此处以运行进程
+    struct trapframe *tf;                   // 当前中断的陷阱帧
+    uintptr_t pgdir;                        // 页目录表(PDT)的基地址
+    uint32_t flags;                         // 进程标志
+    char name[PROC_NAME_LEN + 1];           // 进程名
+    list_entry_t list_link;                 // 进程链表
+    list_entry_t hash_link;                 // 进程哈希链表
+    int exit_code;                          // 退出码（传递给父进程）
+    uint32_t wait_state;                    // 等待状态
+    struct proc_struct *cptr, *yptr, *optr; // 进程之间的关系
+    struct run_queue *rq;                   // 包含进程的运行队列
+    list_entry_t run_link;                  // 运行队列中的链表项
+    int time_slice;                         // 占用CPU的时间片
+    skew_heap_entry_t lab6_run_pool;        // 仅用于LAB6：运行池中的项
+    uint32_t lab6_stride;                   // 仅用于LAB6：进程当前的stride
+    uint32_t lab6_priority;                 // 仅用于LAB6：进程优先级，由lab6_set_priority(uint32_t)设置
 };
 
-#define PF_EXITING 0x00000001 // getting shutdown
+#define PF_EXITING 0x00000001 // 正在关闭
 
 #define WT_CHILD (0x00000001 | WT_INTERRUPTED)
-#define WT_INTERRUPTED 0x80000000 // the wait state could be interrupted
+#define WT_INTERRUPTED 0x80000000 // 等待状态可被中断
 
 #define le2proc(le, member) \
     to_struct((le), struct proc_struct, member)
@@ -85,7 +85,7 @@ char *set_proc_name(struct proc_struct *proc, const char *name);
 char *get_proc_name(struct proc_struct *proc);
 void cpu_idle(void) __attribute__((noreturn));
 
-// FOR LAB6, set the process's priority (bigger value will get more CPU time)
+// 仅用于LAB6，设置进程优先级（值越大获得的CPU时间越多）
 void lab6_set_priority(uint32_t priority);
 
 struct proc_struct *find_proc(int pid);
