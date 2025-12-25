@@ -31,12 +31,17 @@ wait_t *wait_queue_last(wait_queue_t *queue);
 
 bool wait_queue_empty(wait_queue_t *queue);
 bool wait_in_queue(wait_t *wait);
+// 唤醒与wait关联的进程
 void wakeup_wait(wait_queue_t *queue, wait_t *wait, uint32_t wakeup_flags, bool del);
+// 唤醒等待队列上挂着的第一个wait所关联的进程
 void wakeup_first(wait_queue_t *queue, uint32_t wakeup_flags, bool del);
+// 唤醒等待队列上所有的等待的进程
 void wakeup_queue(wait_queue_t *queue, uint32_t wakeup_flags, bool del);
 
+// 让wait与进程关联，且让当前进程关联的wait进入等待队列queue，当前进程睡眠
 void wait_current_set(wait_queue_t *queue, wait_t *wait, uint32_t wait_state);
 
+// 把与当前进程关联的wait从等待队列queue中删除
 #define wait_current_del(queue, wait)                                       \
     do {                                                                    \
         if (wait_in_queue(wait)) {                                          \
