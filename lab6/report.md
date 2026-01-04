@@ -447,7 +447,7 @@ schedule() (kern/schedule/sched.c)
 
 2.  **调度时机的检查点**：
     内核会在一些安全的“检查点”检查这个标志位，最典型的就是**从中断或异常返回用户态之前**。如果发现 `need_resched` 为 1，说明有调度请求待处理，此时内核会调用 `schedule()` 函数来执行真正的进程切换。
-
+xw
 3.  **避免频繁调度**：
     通过这种机制，内核可以将多次调度请求合并处理，并且确保调度只在系统状态安全、一致的时候发生，从而提高了系统的稳定性和效率。
 
@@ -503,6 +503,475 @@ schedule() (kern/schedule/sched.c)
 
 3.  **模块化隔离**：
     不同的调度算法可以实现在完全独立的文件中，互不干扰。添加新算法不需要修改现有的算法代码，符合“开闭原则”（对扩展开放，对修改关闭）。
+
+---
+## 练习2: 实现 Round Robin 调度算法
+
+### 1. Lab5 与 Lab6 函数对比分析
+
+**Lab5 的 `schedule()` 实现**：
+
+```c
+void schedule(void)
+{
+    bool intr_flag;
+    list_entry_t *le, *last;
+    struct proc_struct *next = NULL;
+    local_intr_save(intr_flag);
+    {
+        current->need_resched = 0;
+        last = (current == idleproc) ? &proc_list : &(current->list_link);
+        le = last;
+        do
+        {
+            if ((le = list_next(le)) != &proc_list)
+            {
+                next = le2proc(le, list_link);
+                if (next->state == PROC_RUNNABLE)
+                {
+                    break;
+                }
+            }
+        } while (le != last);
+        if (next == NULL || next->state != PROC_RUNNABLE)
+        {
+            next = idleproc;
+        }
+        next->runs++;
+        if (next != current)
+        {
+            proc_run(next);
+        }
+    }
+    local_intr_restore(intr_flag);
+}
+```
+
+**Lab6 的 `schedule()` 实现**：
+
+```c
+void schedule(void)
+{
+    bool intr_flag;
+    struct proc_struct *next;
+    local_intr_save(intr_flag);
+    {
+        current->need_resched = 0;
+        // 若当前进程仍可运行，将其重新加入就绪队列
+        if (current->state == PROC_RUNNABLE)
+        {
+            sched_class_enqueue(current);
+        }
+        // 选择下一个要运行的进程
+        if ((next = sched_class_pick_next()) != NULL)
+        {
+            sched_class_dequeue(next);
+        }
+        // 若无可调度进程，运行idle进程
+        if (next == NULL)
+        {
+            next = idleproc;
+        }
+        next->runs++;
+        if (next != current)
+        {
+            proc_run(next);
+        }
+    }
+    local_intr_restore(intr_flag);
+}
+```
+
+1. **算法解耦**：Lab5 的实现将调度算法（FIFO 遍历）硬编码在 `schedule()` 函数中，而 Lab6 通过调用 `sched_class_enqueue()`、`sched_class_pick_next()`、`sched_class_dequeue()` 等接口将具体的调度策略委托给调度类实现。这使得 `schedule()` 成为一个通用的调度框架，可以支持多种调度算法（RR、Stride等）。
+
+2. **独立的就绪队列**：Lab5 直接遍历全局进程链表 `proc_list`（包含所有状态的进程），效率较低；Lab6 使用独立的运行队列 `run_queue`，只包含处于 `PROC_RUNNABLE` 状态的进程，查找效率更高。
+
+3. **当前进程处理**：Lab6 新增了将当前进程重新入队的逻辑，用于时间片轮转(Round Robin)算法，即当一个进程时间片用完但仍可运行时，需要将其放回队列尾部等待下一次调度。
+
+### 2. RR 调度算法实现
+
+#### 2.1 RR_init：初始化运行队列
+
+```c
+static void
+RR_init(struct run_queue *rq)
+{
+    // LAB6: 2311208
+    // 初始化运行队列的链表头，使其成为空链表
+    list_init(&(rq->run_list));
+    // 初始化进程计数器为0
+    rq->proc_num = 0;
+}
+```
+
+- 使用 `list_init` 初始化 `run_list`，使链表头的 `prev` 和 `next` 都指向自己，形成空的循环双向链表
+- 将进程计数器 `proc_num` 初始化为 0
+
+#### 2.2 RR_enqueue：进程入队
+
+```c
+static void
+RR_enqueue(struct run_queue *rq, struct proc_struct *proc)
+{
+    // LAB6: 2313857
+    assert(list_empty(&(proc->run_link)));
+    // 将进程的run_link节点插入到运行队列链表的末尾
+    list_add_before(&(rq->run_list), &(proc->run_link));
+    // 处理时间片：如果进程时间片为0或超过最大值，重置为最大时间片
+    if (proc->time_slice == 0 || proc->time_slice > rq->max_time_slice) {
+        proc->time_slice = rq->max_time_slice;
+    }
+    // 建立进程与运行队列的关联
+    proc->rq = rq;
+    // 更新队列中的进程计数
+    rq->proc_num++;
+}
+```
+
+1. **断言检查**：确保进程的 `run_link` 当前不在任何队列中
+2. **队尾插入**：使用 `list_add_before(&(rq->run_list), ...)` 将进程插入到 `run_list` 头节点之前，由于是循环链表，这等价于插入到队列末尾
+3. **时间片处理**：处理两种边界情况：
+   - 时间片为0
+   - 时间片异常过大
+4. **建立关联**：将进程的 `rq` 指针指向当前运行队列
+5. **更新计数**：队列进程数加1
+
+**选择 `list_add_before` 的原因**：
+- RR 算法是 FIFO 模式：先入队的进程先被调度
+- `run_list` 是链表头，`list_add_before(&run_list, ...)` 将元素插入到头节点之前
+- 在循环双向链表中，头节点之前就是队尾位置
+- 配合 `RR_pick_next` 从头节点之后取元素，实现了完整的 FIFO 队列
+
+#### 2.3 RR_dequeue：进程出队
+
+```c
+static void
+RR_dequeue(struct run_queue *rq, struct proc_struct *proc)
+{
+    // LAB6: 2311208
+    assert(!list_empty(&(proc->run_link)) && proc->rq == rq);
+    // 使用list_del_init从链表中删除节点，并重新初始化该节点
+    list_del_init(&(proc->run_link));
+    // 更新队列中的进程计数
+    rq->proc_num--;
+}
+```
+
+1. **断言检查**：确保进程确实在队列中（`run_link` 非空），且属于当前运行队列
+2. **删除并初始化**：使用 `list_del_init` 一次性完成删除和重初始化
+3. **更新计数**：队列进程数 `proc_num` 减1
+
+#### 2.4 RR_pick_next：选择下一个进程
+
+```c
+static struct proc_struct *
+RR_pick_next(struct run_queue *rq)
+{
+    // LAB6: 2311208
+    // 处理边界情况：如果队列为空，返回NULL
+    list_entry_t *le = list_next(&(rq->run_list));
+    if (le != &(rq->run_list)) {
+        // 使用le2proc宏从链表节点获取进程结构体指针
+        return le2proc(le, run_link);
+    }
+    return NULL;
+}
+```
+
+1. **获取队首**：`list_next(&run_list)` 获取头节点的下一个节点，即队首元素
+2. **空队列检查**：如果下一个节点就是头节点本身，说明队列为空，返回 NULL
+3. **类型转换**：使用 `le2proc` 宏从 `list_entry_t` 指针计算出包含它的 `proc_struct` 指针
+
+#### 2.5 RR_proc_tick：时钟中断处理
+
+```c
+static void
+RR_proc_tick(struct run_queue *rq, struct proc_struct *proc)
+{
+    // LAB6: 2311208
+    // 每次时钟中断，当前进程的时间片减1
+    if (proc->time_slice > 0) {
+        proc->time_slice--;
+    }
+    // 当时间片耗尽时，设置need_resched标志，触发重新调度
+    if (proc->time_slice == 0) {
+        proc->need_resched = 1;
+    }
+}
+```
+
+1. **递减时间片**：每次时钟中断，将当前进程的 `time_slice` 减1
+2. **触发调度**：当时间片降为0时，设置 `need_resched = 1`
+
+
+**`need_resched` 标志**
+
+1. **延迟调度机制**：时钟中断可能发生在内核临界区内（如持有锁时），此时立即调用 `schedule()` 可能导致死锁或数据不一致。通过设置标志位，调度被推迟到一个安全的时间点（中断返回前或系统调用返回前）。
+
+2. **中断嵌套处理**：如果在 `proc_tick` 中直接调用 `schedule()`，可能破坏中断处理的栈结构。标志位机制确保调度只在中断处理的顶层执行。
+
+3. **批量处理**：在一个时钟中断周期内可能有多个事件需要触发调度（如进程唤醒），标志位可以将这些请求合并为一次调度操作。
+
+### 3. 运行结果
+
+#### 3.1 切换到 RR 调度器
+
+修改 `kern/schedule/sched.c` 中的 `sched_init` 函数以使用 RR 调度器
+
+```c
+void sched_init(void)
+{
+    list_init(&timer_list);
+    
+    sched_class = &default_sched_class;  // 使用 RR 调度器
+    
+    rq = &__rq;
+    rq->max_time_slice = MAX_TIME_SLICE;
+    sched_class->init(rq);
+    
+    cprintf("sched class: %s\n", sched_class->name);
+}
+```
+
+#### 3.2 调度现象观察
+
+执行 `make qemu` 后，观察到以下 RR 调度现象：
+
+**1. 调度器启动确认**
+
+```
+sched class: RR_scheduler
+```
+
+系统正确加载了 Round Robin 调度器。
+
+**2. 进程创建与优先级设置**
+
+```
+kernel_execve: pid = 2, name = "priority".
+set priority to 6
+main: fork ok,now need to wait pids.
+set priority to 1
+set priority to 2
+set priority to 3
+set priority to 4
+set priority to 5
+```
+
+主进程（优先级6）创建了5个子进程，分别设置优先级为1-5。
+
+**3. CPU 时间分配结果**
+
+```
+child pid 3, acc 512000, time 2010
+child pid 4, acc 508000, time 2010
+child pid 5, acc 504000, time 2010
+child pid 6, acc 504000, time 2020
+child pid 7, acc 504000, time 2020
+```
+
+| 进程 PID | 设置的优先级 | acc 累计值 | 相对比例 |
+|---------|------------|-----------|---------|
+| 3 | 1 | 512000 | ≈ 1.0 |
+| 4 | 2 | 508000 | ≈ 1.0 |
+| 5 | 3 | 504000 | ≈ 1.0 |
+| 6 | 4 | 504000 | ≈ 1.0 |
+| 7 | 5 | 504000 | ≈ 1.0 |
+
+**4. 调度结果分析**
+
+```
+sched result: 1 1 1 1 1
+```
+
+- **公平性验证**：所有进程获得几乎相等的 CPU 时间
+- **优先级平等**：RR 算法忽略优先级，平等对待所有进程
+- **时间片轮转**：每个进程运行一个时间片后被移到队列末尾
+
+**5. 时间片轮转机制**
+
+由于 `MAX_TIME_SLICE = 5`，每个进程每次最多运行 5 个时钟中断周期后就会被切换。在约 2000 个 ticks 的运行时间内，每个进程被调度了约 400 次（2000 / 5 = 400）
+
+```shell
+myname@LAPTOP-R0L8L50O:/mnt/f/Homework/TY_part1/OS/lab6$ make qemu
++ cc kern/schedule/sched.c
++ ld bin/kernel
+riscv64-unknown-elf-objcopy bin/kernel --strip-all -O binary bin/ucore.img
+
+OpenSBI v0.4 (Jul  2 2019 11:53:53)
+   ____                    _____ ____ _____
+  / __ \                  / ____|  _ \_   _|
+ | |  | |_ __   ___ _ __ | (___ | |_) || |
+ | |  | | '_ \ / _ \ '_ \ \___ \|  _ < | |
+ | |__| | |_) |  __/ | | |____) | |_) || |_
+  \____/| .__/ \___|_| |_|_____/|____/_____|
+        | |
+        |_|
+
+Platform Name          : QEMU Virt Machine
+Platform HART Features : RV64ACDFIMSU
+Platform Max HARTs     : 8
+Current Hart           : 0
+Firmware Base          : 0x80000000
+Firmware Size          : 112 KB
+Runtime SBI Version    : 0.1
+
+PMP0: 0x0000000080000000-0x000000008001ffff (A)
+PMP1: 0x0000000000000000-0xffffffffffffffff (A,R,W,X)
+(THU.CST) os is loading ...
+
+Special kernel symbols:
+  entry  0xc020004a (virtual)
+  etext  0xc0205978 (virtual)
+  edata  0xc02b12a0 (virtual)
+  end    0xc02b5780 (virtual)
+Kernel executable memory footprint: 726KB
+DTB Init
+HartID: 0
+DTB Address: 0x82200000
+Physical Memory from DTB:
+  Base: 0x0000000080000000
+  Size: 0x0000000008000000 (128 MB)
+  End:  0x0000000087ffffff
+DTB init completed
+memory management: default_pmm_manager
+physcial memory map:
+  memory: 0x08000000, [0x80000000, 0x87ffffff].
+vapaofset is 18446744070488326144
+check_alloc_page() succeeded!
+check_pgdir() succeeded!
+check_boot_pgdir() succeeded!
+use SLOB allocator
+kmalloc_init() succeeded!
+check_vma_struct() succeeded!
+check_vmm() succeeded.
+sched class: RR_scheduler
+++ setup timer interrupts
+kernel_execve: pid = 2, name = "priority".
+set priority to 6
+main: fork ok,now need to wait pids.
+set priority to 1
+set priority to 2
+set priority to 3
+set priority to 4
+set priority to 5
+100 ticks
+100 ticks
+child pid 3, acc 512000, time 2010
+child pid 4, acc 508000, time 2010
+child pid 5, acc 504000, time 2010
+child pid 6, acc 504000, time 2020
+child pid 7, acc 504000, time 2020
+main: pid 0, acc 512000, time 2020
+main: pid 4, acc 508000, time 2020
+main: pid 5, acc 504000, time 2020
+main: pid 6, acc 504000, time 2020
+main: pid 7, acc 504000, time 2030
+main: wait pids over
+sched result: 1 1 1 1 1
+all user-mode processes have quit.
+init check memory pass.
+kernel panic at kern/process/proc.c:532:
+    initproc exit.
+```
+
+### 4. Round Robin 调度算法分析
+
+#### 4.1 优点
+
+1. **公平性好**：每个就绪进程获得相等的时间片，不会出现饥饿现象。
+
+2. **实现简单**：只需要一个 FIFO 队列，入队、出队操作都是 O(1) 复杂度。
+
+3. **无需预先知道进程信息**：不需要估计进程的执行时间或优先级。
+
+#### 4.2 缺点
+
+1. **无差别对待**：不区分进程的重要性或紧急程度，关键进程可能得不到及时响应。
+
+2. **上下文切换开销**：时间片过小会导致频繁切换，浪费 CPU 时间；时间片过大则退化为 FCFS。
+
+3. **不适合 I/O 密集型进程**：I/O 密集型进程往往在时间片用完前就阻塞，下次被调度时又要重新等待一轮。
+
+#### 4.3 时间片大小的优化
+
+**时间片大小对比**：
+
+| 时间片大小 | 优点 | 缺点 |
+|-----------|------|------|
+| 较小（如5-10ms） | 响应快，交互性好 | 上下文切换频繁，开销大 |
+| 较大（如100-200ms） | 切换开销小 | 响应慢，可能感觉卡顿 |
+
+**优化策略**：
+- **交互式系统**：选择较小的时间片（10-20ms），保证良好的响应性
+- **批处理系统**：选择较大的时间片（100ms+），提高吞吐量
+- **混合系统**：可以使用多级反馈队列，对不同类型的进程使用不同的时间片
+
+### 5. 拓展思考
+
+#### 5.1 实现优先级 RR 调度
+
+1. **数据结构**：
+   - 将单一的运行队列改为多个优先级队列
+   - 或者使用有序链表/堆按优先级排序
+
+2. **入队逻辑**：
+   ```c
+   static void
+   Priority_RR_enqueue(struct run_queue *rq, struct proc_struct *proc)
+   {
+       // 根据优先级选择队列或插入位置
+       int priority = proc->lab6_priority;
+       list_add_before(&(rq->priority_lists[priority]), &(proc->run_link));
+       // ... 其他处理
+   }
+   ```
+
+3. **选择逻辑**：
+   ```c
+   static struct proc_struct *
+   Priority_RR_pick_next(struct run_queue *rq)
+   {
+       // 从最高优先级队列开始查找
+       for (int i = MAX_PRIORITY - 1; i >= 0; i--) {
+           if (!list_empty(&(rq->priority_lists[i]))) {
+               list_entry_t *le = list_next(&(rq->priority_lists[i]));
+               return le2proc(le, run_link);
+           }
+       }
+       return NULL;
+   }
+   ```
+
+4. **动态优先级调整**：
+   - 长时间等待的进程提升优先级（防止饥饿）
+   - 使用过多 CPU 时间的进程降低优先级
+
+#### 5.2 当前实现是否支持多核调度？
+
+当前实现不支持多核调度，主要问题包括：
+
+1. **全局共享队列**：当前只有一个全局运行队列 `rq`，多核并发访问会产生竞争条件。
+
+2. **锁机制不完善**：虽然使用了 `local_intr_save/restore` 禁用本地中断，但这只能防止单核上的并发，无法解决多核间的竞争。
+
+**多核调度改进方案**：
+
+1. 每核私有队列，每个 CPU 维护自己的就绪队列，减少锁竞争：
+   ```c
+   struct run_queue per_cpu_rq[NR_CPUS];
+   ```
+
+2. 添加自旋锁，进程调度在访问队列前获取锁，确保原子性：
+   ```c
+   struct run_queue {
+       spinlock_t lock;
+       list_entry_t run_list;
+       // ...
+   };
+   ```
+
+3. 引入窃取机制，当一个 CPU 的队列为空时，从其他 CPU 的队列"窃取"进程执行。
 
 ---
 
@@ -1146,17 +1615,3 @@ sched result: 1 2 2 2 3
 ### 运行截图
 
 ![Stride 调度算法运行输出](Figures/stride调度算法运行输出.png)
-
----
-
-## 实验总结
-
-### 遇到的问题与解决
-
-**问题 1**：理解 stride 溢出处理机制
-
-**解决过程**：
-
-- 阅读实验指导书中的理论证明
-- 理解了有符号整数差值的数学性质
-- 明白了为什么 `BIG_STRIDE = 0x7FFFFFFF` 能保证正确性
